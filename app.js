@@ -22,11 +22,20 @@
       let cloudConfig = { supabaseUrl: "", anonKey: "" };
       let submissions = [];
       let historyEditSourceId = null;
+      let workerSearchText = "";
+      let workerFilterValue = "all";
       const els = {
           loginScreen: (0, dom_1.byId)("loginScreen"),
           loginForm: (0, dom_1.byId)("loginForm"),
           loginPassword: (0, dom_1.byId)("loginPassword"),
           loginError: (0, dom_1.byId)("loginError"),
+          saveStatus: (0, dom_1.byId)("saveStatus"),
+          dashboardEmployees: (0, dom_1.byId)("dashboardEmployees"),
+          dashboardSubmissions: (0, dom_1.byId)("dashboardSubmissions"),
+          dashboardHistory: (0, dom_1.byId)("dashboardHistory"),
+          dashboardSettings: (0, dom_1.byId)("dashboardSettings"),
+          attentionStatus: (0, dom_1.byId)("attentionStatus"),
+          needsAttentionList: (0, dom_1.byId)("needsAttentionList"),
           availabilityChecks: (0, dom_1.byId)("availabilityChecks"),
           workerForm: (0, dom_1.byId)("workerForm"),
           workerName: (0, dom_1.byId)("workerName"),
@@ -48,6 +57,8 @@
           shiftHours: (0, dom_1.byId)("shiftHours"),
           mealBreakHours: (0, dom_1.byId)("mealBreakHours"),
           staffingTable: (0, dom_1.byId)("staffingTable"),
+          workerSearch: (0, dom_1.byId)("workerSearch"),
+          workerFilter: (0, dom_1.byId)("workerFilter"),
           workersList: (0, dom_1.byId)("workersList"),
           workerCount: (0, dom_1.byId)("workerCount"),
           scheduleOutput: (0, dom_1.byId)("scheduleOutput"),
@@ -135,6 +146,9 @@
           els.saveHistoryModificationsBtn.addEventListener("click", () => void saveHistoryModifications());
           [els.historyEmployeeFilter, els.historyWeekFilter, els.historyStatusFilter].forEach((filter) => filter.addEventListener("change", renderHistory));
           [els.weekStart, els.openShift, els.closeShift, els.shiftHours, els.mealBreakHours].forEach((input) => input.addEventListener("change", () => void rulesChanged()));
+          els.workerSearch.addEventListener("input", () => { workerSearchText = els.workerSearch.value.trim().toLowerCase(); renderWorkers(); });
+          els.workerFilter.addEventListener("change", () => { workerFilterValue = els.workerFilter.value; renderWorkers(); });
+          document.querySelectorAll("[data-jump-target]").forEach((button) => button.addEventListener("click", () => document.getElementById(button.dataset.jumpTarget || "")?.scrollIntoView({ behavior: "smooth", block: "start" })));
       }
       function renderAvailabilityInputs() {
           els.availabilityChecks.innerHTML = types_1.DAYS.map((day) => '<label class="availability-day"><span>' + day + '</span><select data-add-shift="' + day + '" required><option value="Open">Available for Open</option><option value="Close">Available for Close</option><option value="Both">Available for Both</option><option value="Unavailable" selected>Not Available on ' + day + '</option></select></label>').join("");
@@ -155,7 +169,47 @@
           renderWorkers();
           renderSchedule();
           renderScheduleHistory();
+          renderDashboard();
+          renderNeedsAttention();
           ensureWorkerFormInteractive();
+      }
+      function renderDashboard() {
+          els.dashboardEmployees.textContent = state.workers.length + " worker" + (state.workers.length === 1 ? "" : "s");
+          const pending = submissions.filter((submission) => submission.status === "pending").length;
+          els.dashboardSubmissions.textContent = submissions.length ? pending + " pending" : "Not synced";
+          els.dashboardHistory.textContent = state.scheduleHistory.length + " saved";
+          els.dashboardSettings.textContent = cloudConfig.supabaseUrl && cloudConfig.anonKey ? "Supabase configured" : "Supabase not configured";
+      }
+      function renderNeedsAttention() {
+          const items = [];
+          const pending = submissions.filter((submission) => submission.status === "pending").length;
+          if (pending)
+              items.push({ level: "bad", text: pending + " availability submission" + (pending === 1 ? "" : "s") + " need review." });
+          if (state.schedule) {
+              for (const day of state.schedule.days) {
+                  const dayWarnings = [...new Set(day.warnings)];
+                  dayWarnings.filter(isMustFixWarning).forEach((warning) => items.push({ level: "bad", text: warning }));
+                  dayWarnings.filter((warning) => !isMustFixWarning(warning)).forEach((warning) => items.push({ level: "warn", text: warning }));
+                  const lunchNames = [...new Set(["open", "close"].flatMap((shift) => day.shifts[shift].assigned.filter((worker) => worker.needsLunch).map((worker) => worker.name)))];
+                  if (lunchNames.length)
+                      items.push({ level: "warn", text: day.day + " lunch: " + lunchNames.join(", ") + "." });
+              }
+          }
+          if (!items.length) {
+              els.attentionStatus.textContent = state.schedule ? "Good" : "Not generated";
+              els.attentionStatus.className = "count-pill tag good";
+              els.needsAttentionList.innerHTML = '<div class="attention-item good">All shifts covered or no schedule issues to review.</div>';
+              return;
+          }
+          const visible = items.slice(0, 6);
+          const extra = items.length - visible.length;
+          els.attentionStatus.textContent = items.some((item) => item.level === "bad") ? "Must fix" : "Review";
+          els.attentionStatus.className = "count-pill tag " + (items.some((item) => item.level === "bad") ? "bad" : "warn");
+          els.needsAttentionList.innerHTML = visible.map((item) => '<div class="attention-item ' + item.level + '">' + (0, dom_1.escapeHtml)(item.text) + '</div>').join("") + (extra > 0 ? '<div class="attention-item warn">+' + extra + ' more item' + (extra === 1 ? "" : "s") + '.</div>' : "");
+      }
+      function isMustFixWarning(warning) {
+          const text = warning.toLowerCase();
+          return text.includes("lead") || text.includes("unfilled") || text.includes("short") || text.includes("no employee") || text.includes("not enough");
       }
       async function addWorker(event) {
           event.preventDefault();
@@ -250,16 +304,32 @@
       }
       function renderWorkers() {
           els.workerCount.textContent = state.workers.length + " worker" + (state.workers.length === 1 ? "" : "s");
+          const workers = state.workers.filter((worker) => {
+              const matchesSearch = !workerSearchText || worker.name.toLowerCase().includes(workerSearchText);
+              const matchesFilter = workerFilterValue === "all" ||
+                  (workerFilterValue === "leads" && worker.isManager) ||
+                  (workerFilterValue === "nonLeads" && !worker.isManager) ||
+                  (workerFilterValue === "active" && worker.active) ||
+                  (workerFilterValue === "inactive" && !worker.active) ||
+                  (workerFilterValue === "available" && worker.availability.length > 0);
+              return matchesSearch && matchesFilter;
+          });
           if (!state.workers.length) {
               els.workersList.innerHTML = '<div class="empty-state">No workers yet. Add workers and availability to begin.</div>';
               return;
           }
-          els.workersList.innerHTML = state.workers.map((worker) => {
-              const tags = (!worker.active ? '<span class="tag bad">Inactive</span>' : '') + (worker.noHourLimits ? '<span class="tag good">No Hour Limits</span>' : '') + (worker.isManager ? '<span class="tag good">Qualified to Open and Close</span>' : '');
+          if (!workers.length) {
+              els.workersList.innerHTML = '<div class="empty-state">No workers match the current search or filter.</div>';
+              return;
+          }
+          els.workersList.innerHTML = workers.map((worker) => {
+              const tags = (worker.active ? '<span class="tag good">Active</span>' : '<span class="tag bad">Inactive</span>') + (worker.isManager ? '<span class="tag good">Lead</span>' : '<span class="tag warn">Non-Lead</span>') + '<span class="tag">Skill ' + worker.skillRating + '</span>' + (worker.noHourLimits ? '<span class="tag good">No Hour Limits</span>' : '');
               const daySummary = types_1.DAYS.map((day, index) => '<span class="day-mini ' + (worker.availability.includes(day) ? 'on' : '') + '">' + types_1.SHORT_DAYS[index] + (worker.availability.includes(day) ? ': ' + worker.shiftAvailability[day] : '') + '</span>').join("");
+              const availabilitySummary = worker.availability.length ? worker.availability.map((day) => day.slice(0, 3) + " " + (worker.shiftAvailability[day] || "Both")).join(", ") : "None set";
+              const defaultTimeSummary = "Open " + (0, time_1.formatTime)(worker.shiftTimes.open.start) + "-" + (0, time_1.formatTime)(worker.shiftTimes.open.end) + " | Close " + (0, time_1.formatTime)(worker.shiftTimes.close.start) + "-" + (0, time_1.formatTime)(worker.shiftTimes.close.end);
               const dayEditors = types_1.DAYS.map((day) => '<label class="worker-availability-day"><span>' + day + '</span><select data-edit-shift-worker="' + worker.id + '" data-edit-shift-day="' + day + '" required><option value="Open" ' + selected(worker.shiftAvailability[day] || 'Unavailable', 'Open') + '>Available for Open</option><option value="Close" ' + selected(worker.shiftAvailability[day] || 'Unavailable', 'Close') + '>Available for Close</option><option value="Both" ' + selected(worker.shiftAvailability[day] || 'Unavailable', 'Both') + '>Available for Both</option><option value="Unavailable" ' + selected(worker.shiftAvailability[day] || 'Unavailable', 'Unavailable') + '>Not Available on ' + day + '</option></select></label>').join("");
               const hourSummary = worker.noHourLimits ? 'No hour limits' : worker.preferredWeeklyHours + ' preferred hrs | ' + worker.maxWeeklyHours + ' max hrs';
-              return '<article class="worker-card ' + (!worker.active ? 'inactive' : '') + '"><div class="worker-top"><div><h3>' + (0, dom_1.escapeHtml)(worker.name) + '</h3><div class="meta">Code ' + (0, dom_1.escapeHtml)(worker.employeeCode || 'Not set') + ' | ' + (0, dom_1.escapeHtml)(worker.position) + (worker.isManager ? ' | Lead' : '') + ' | Skill ' + worker.skillRating + '/10 | ' + hourSummary + '</div></div><div class="card-actions"><button class="secondary" type="button" data-toggle-active="' + worker.id + '">' + (worker.active ? 'Deactivate' : 'Activate') + '</button><button class="secondary danger" type="button" data-delete="' + worker.id + '">Delete</button></div></div><div class="tag-row">' + tags + '</div>' + (worker.notes ? '<div class="meta">Notes: ' + (0, dom_1.escapeHtml)(worker.notes) + '</div>' : '') + '<div class="worker-days">' + daySummary + '</div><div class="worker-edit"><label>Employee code <input data-edit="' + worker.id + '" data-field="employeeCode" type="text" inputmode="numeric" pattern="\\d{4}" maxlength="4" value="' + (0, dom_1.escapeHtml)(worker.employeeCode) + '"></label><label>Position <input data-edit="' + worker.id + '" data-field="position" type="text" value="' + (0, dom_1.escapeHtml)(worker.position) + '"></label><label>Lead <select data-edit="' + worker.id + '" data-field="isManager"><option value="false" ' + selected(String(worker.isManager), 'false') + '>No</option><option value="true" ' + selected(String(worker.isManager), 'true') + '>Yes</option></select></label><label>Skill Rating <input data-edit="' + worker.id + '" data-field="skillRating" type="number" min="1" max="10" step="1" value="' + worker.skillRating + '"></label><label class="check-row full"><input data-edit="' + worker.id + '" data-field="noHourLimits" type="checkbox" ' + checked(worker.noHourLimits) + '> No Hour Limits</label><label>Preferred Weekly Hours <input data-edit="' + worker.id + '" data-field="preferredWeeklyHours" type="number" min="0" max="168" step="0.5" value="' + worker.preferredWeeklyHours + '" ' + disabled(worker.noHourLimits) + '></label><label>Maximum Weekly Hours <input data-edit="' + worker.id + '" data-field="maxWeeklyHours" type="number" min="0" max="168" step="0.5" value="' + worker.maxWeeklyHours + '" ' + disabled(worker.noHourLimits) + '></label><div class="full time-grid"><label>Default Open Start <input data-worker-time="' + worker.id + '" data-shift="open" data-part="start" type="time" value="' + worker.shiftTimes.open.start + '"></label><label>Default Open End <input data-worker-time="' + worker.id + '" data-shift="open" data-part="end" type="time" value="' + worker.shiftTimes.open.end + '"></label><label>Default Close Start <input data-worker-time="' + worker.id + '" data-shift="close" data-part="start" type="time" value="' + worker.shiftTimes.close.start + '"></label><label>Default Close End <input data-worker-time="' + worker.id + '" data-shift="close" data-part="end" type="time" value="' + worker.shiftTimes.close.end + '"></label></div><label class="full">Notes <textarea data-edit="' + worker.id + '" data-field="notes" rows="2">' + (0, dom_1.escapeHtml)(worker.notes) + '</textarea></label><div class="full worker-days">' + dayEditors + '</div></div></article>';
+              return '<article class="worker-card ' + (!worker.active ? 'inactive' : '') + '"><div class="worker-top"><div><h3>' + (0, dom_1.escapeHtml)(worker.name) + '</h3><div class="meta">Code ' + (0, dom_1.escapeHtml)(worker.employeeCode || 'Not set') + ' | ' + (0, dom_1.escapeHtml)(worker.position) + ' | ' + hourSummary + '</div></div><div class="card-actions"><button class="secondary" type="button" data-toggle-active="' + worker.id + '">' + (worker.active ? 'Deactivate' : 'Activate') + '</button><button class="secondary danger" type="button" data-delete="' + worker.id + '">Delete</button></div></div><div class="tag-row">' + tags + '</div><div class="worker-summary"><strong>Available:</strong> ' + (0, dom_1.escapeHtml)(availabilitySummary) + '</div><div class="worker-summary"><strong>Defaults:</strong> ' + (0, dom_1.escapeHtml)(defaultTimeSummary) + '</div>' + (worker.notes ? '<div class="meta">Notes: ' + (0, dom_1.escapeHtml)(worker.notes) + '</div>' : '') + '<div class="worker-days">' + daySummary + '</div><div class="worker-edit"><label>Employee code <input data-edit="' + worker.id + '" data-field="employeeCode" type="text" inputmode="numeric" pattern="\\d{4}" maxlength="4" value="' + (0, dom_1.escapeHtml)(worker.employeeCode) + '"></label><label>Position <input data-edit="' + worker.id + '" data-field="position" type="text" value="' + (0, dom_1.escapeHtml)(worker.position) + '"></label><label>Lead <select data-edit="' + worker.id + '" data-field="isManager"><option value="false" ' + selected(String(worker.isManager), 'false') + '>No</option><option value="true" ' + selected(String(worker.isManager), 'true') + '>Yes</option></select></label><label>Skill Rating <input data-edit="' + worker.id + '" data-field="skillRating" type="number" min="1" max="10" step="1" value="' + worker.skillRating + '"></label><label class="check-row full"><input data-edit="' + worker.id + '" data-field="noHourLimits" type="checkbox" ' + checked(worker.noHourLimits) + '> No Hour Limits</label><label>Preferred Weekly Hours <input data-edit="' + worker.id + '" data-field="preferredWeeklyHours" type="number" min="0" max="168" step="0.5" value="' + worker.preferredWeeklyHours + '" ' + disabled(worker.noHourLimits) + '></label><label>Maximum Weekly Hours <input data-edit="' + worker.id + '" data-field="maxWeeklyHours" type="number" min="0" max="168" step="0.5" value="' + worker.maxWeeklyHours + '" ' + disabled(worker.noHourLimits) + '></label><div class="full time-grid"><label>Default Open Start <input data-worker-time="' + worker.id + '" data-shift="open" data-part="start" type="time" value="' + worker.shiftTimes.open.start + '"></label><label>Default Open End <input data-worker-time="' + worker.id + '" data-shift="open" data-part="end" type="time" value="' + worker.shiftTimes.open.end + '"></label><label>Default Close Start <input data-worker-time="' + worker.id + '" data-shift="close" data-part="start" type="time" value="' + worker.shiftTimes.close.start + '"></label><label>Default Close End <input data-worker-time="' + worker.id + '" data-shift="close" data-part="end" type="time" value="' + worker.shiftTimes.close.end + '"></label></div><label class="full">Notes <textarea data-edit="' + worker.id + '" data-field="notes" rows="2">' + (0, dom_1.escapeHtml)(worker.notes) + '</textarea></label><div class="full worker-days">' + dayEditors + '</div></div></article>';
           }).join("");
           els.workersList.querySelectorAll("[data-toggle-active]").forEach((button) => button.addEventListener("click", () => void toggleWorkerActive(button.dataset.toggleActive)));
           els.workersList.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => void deleteWorker(button.dataset.delete)));
@@ -282,7 +352,7 @@
           const worker = findWorker(id);
           if (!worker)
               return;
-          if (!await confirmDialog("Delete " + worker.name + "? This cannot be undone."))
+          if (!await confirmDialog("Delete " + worker.name + "? This removes the employee profile and future schedules will no longer use this employee. Saved schedule history will stay saved."))
               return;
           state.workers = state.workers.filter((item) => item.id !== id);
           state.schedule = null;
@@ -390,8 +460,11 @@
           }
           const warningCount = (0, reports_1.countScheduleWarnings)(state);
           els.scheduleStatus.textContent = warningCount ? warningCount + " warning" + (warningCount === 1 ? "" : "s") : "Ready";
-          els.scheduleOutput.innerHTML = state.schedule.days.map((day) => '<article class="schedule-day"><div class="schedule-day-head"><div><strong>' + day.day + '</strong><div class="small-muted">' + (0, time_1.formatDate)(day.date) + '</div></div>' + (day.warnings.length ? '<span class="tag bad">' + day.warnings.length + ' issue' + (day.warnings.length === 1 ? '' : 's') + '</span>' : '<span class="tag good">Covered</span>') + '</div><div class="shift-list">' + renderShift(day.day, day.shifts.open, "Opening") + renderShift(day.day, day.shifts.close, "Closing") + '</div>' + (day.warnings.length ? '<div class="warnings">' + day.warnings.map((warning) => '<div class="warning problem">' + (0, dom_1.escapeHtml)(warning) + '</div>').join("") + '</div>' : '') + '</article>').join("");
+          els.scheduleOutput.innerHTML = state.schedule.days.map((day) => '<article class="schedule-day"><div class="schedule-day-head"><div><strong>' + day.day + '</strong><div class="small-muted">' + (0, time_1.formatDate)(day.date) + '</div></div>' + (day.warnings.length ? '<span class="tag bad">' + day.warnings.length + ' issue' + (day.warnings.length === 1 ? '' : 's') + '</span>' : '<span class="tag good">Covered</span>') + '</div><div class="shift-list">' + renderShift(day.day, day.shifts.open, "Opening") + renderShift(day.day, day.shifts.close, "Closing") + '</div>' + (day.warnings.length ? '<div class="warnings">' + day.warnings.map((warning) => '<div class="warning ' + warningClass(warning) + '">' + (0, dom_1.escapeHtml)(warning) + '</div>').join("") + '</div>' : '') + '</article>').join("");
           bindScheduleEditorEvents();
+      }
+      function warningClass(warning) {
+          return isMustFixWarning(warning) ? "problem" : "review";
       }
       function renderShift(day, shift, label) {
           const assigned = shift.assigned.map((assignment) => renderAssignment(day, shift.name, assignment.assignmentId)).join("");
@@ -592,6 +665,8 @@
       }
       async function importData() {
           try {
+              if (!await confirmDialog("Importing may replace current app data. Make sure you have exported a backup before continuing."))
+                  return;
               const imported = await window.habanerosDesktop.importData();
               if (imported.canceled)
                   return;
@@ -708,6 +783,7 @@
           els.supabaseUrl.value = cloudConfig.supabaseUrl;
           els.supabaseAnonKey.value = cloudConfig.anonKey;
           els.cloudStatus.textContent = cloudConfig.supabaseUrl && cloudConfig.anonKey ? "Configured" : "Not configured";
+          renderDashboard();
       }
       function readCloudConfigForm() {
           return { supabaseUrl: els.supabaseUrl.value.trim().replace(/\/$/, ""), anonKey: els.supabaseAnonKey.value.trim() };
@@ -762,6 +838,8 @@
               renderSubmissions();
               renderHistoryFilters();
               renderHistory();
+              renderDashboard();
+              renderNeedsAttention();
           }
           catch (error) {
               showError("Availability submissions could not be loaded. The local scheduler is still available.", error);
@@ -818,6 +896,8 @@
               renderSubmissions();
               renderHistoryFilters();
               renderHistory();
+              renderDashboard();
+              renderNeedsAttention();
           }
           catch (error) {
               showError("The submission could not be updated.", error);
@@ -850,6 +930,8 @@
               renderSubmissions();
               renderHistoryFilters();
               renderHistory();
+              renderDashboard();
+              renderNeedsAttention();
           }
           catch (error) {
               showError("Not every submission could be applied. Refresh the inbox before trying again.", error);
@@ -877,13 +959,15 @@
           els.historyList.querySelectorAll("[data-history-delete]").forEach((button) => button.addEventListener("click", () => void deleteHistorySubmission(button.dataset.historyDelete)));
       }
       async function deleteHistorySubmission(id) {
-          if (!await confirmDialog("Are you sure?"))
+          if (!await confirmDialog("This will permanently delete this reviewed availability history record. Employee profiles and schedules will not be deleted."))
               return;
           try {
               await window.habanerosDesktop.deleteAvailabilitySubmission(id);
               submissions = submissions.filter((submission) => submission.id !== id);
               renderHistoryFilters();
               renderHistory();
+              renderDashboard();
+              renderNeedsAttention();
           }
           catch (error) {
               showError("The history record could not be deleted.", error);
@@ -898,7 +982,7 @@
           return Number.isNaN(date.getTime()) ? (0, dom_1.escapeHtml)(value) : date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
       }
       async function clearData() {
-          if (!await confirmDialog("Are you sure you want to reset all employee availability to Not Available? Employee profiles will be kept."))
+          if (!await confirmDialog("This will reset all employee availability to Not Available. Employee profiles and schedule history will stay saved."))
               return;
           state.workers.forEach((worker) => {
               worker.availability = [];
@@ -923,12 +1007,18 @@
       }
       async function saveState() {
           try {
+              setSaveStatus("Saving...", "warn");
               state = await window.habanerosDesktop.saveState(state);
               await window.habanerosDesktop.setDirty(false);
+              setSaveStatus("Saved", "good");
           }
           finally {
               ensureWorkerFormInteractive();
           }
+      }
+      function setSaveStatus(message, level = "good") {
+          els.saveStatus.textContent = message;
+          els.saveStatus.className = "count-pill status-" + level;
       }
       function resetWorkerTimeInputs() {
           const defaults = (0, defaults_1.defaultWorkerShiftTimes)(state.rules);
@@ -1130,6 +1220,11 @@
           const status = document.getElementById("cloudStatus");
           if (status)
               status.textContent = message;
+          const saveStatus = document.getElementById("saveStatus");
+          if (saveStatus) {
+              saveStatus.textContent = message;
+              saveStatus.className = "count-pill status-" + (message.toLowerCase().includes("fail") || message.toLowerCase().includes("unavailable") ? "bad" : message.toLowerCase().includes("saving") || message.toLowerCase().includes("loading") ? "warn" : "good");
+          }
       }
       function readStorage(key, fallback) {
           const value = localStorage.getItem(key);

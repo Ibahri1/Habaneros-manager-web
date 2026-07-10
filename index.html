@@ -23,6 +23,7 @@
   <header class="app-header">
     <div class="app-brand"><div class="brand-logo-frame"><img class="brand-logo" src="assets/habaneros-logo.png" alt="Habaneros Mexican Food"></div><p>Staff Scheduling Database</p></div>
     <div class="header-actions">
+      <span id="saveStatus" class="count-pill status-good">Ready</span>
       <label class="theme-toggle"><input id="darkModeToggle" type="checkbox"> Dark Mode</label>
       <button id="importBtn" class="secondary" type="button">Import</button>
       <button id="exportJsonBtn" class="secondary" type="button">Export JSON</button>
@@ -31,7 +32,21 @@
     </div>
   </header>
   <main class="layout">
-    <section class="panel controls-panel">
+    <section class="panel wide dashboard-panel">
+      <div class="section-head"><h2>Manager Home</h2><p>Start here for the main scheduling tasks.</p></div>
+      <div class="dashboard-grid">
+        <button class="dashboard-card" data-jump-target="workersSection" type="button"><strong>Employees</strong><span id="dashboardEmployees">0 workers</span></button>
+        <button class="dashboard-card" data-jump-target="submissionsSection" type="button"><strong>Availability Submissions</strong><span id="dashboardSubmissions">Not synced</span></button>
+        <button class="dashboard-card primary-card" data-jump-target="rulesSection" type="button"><strong>Generate Schedule</strong><span>Set rules and build the week</span></button>
+        <button class="dashboard-card" data-jump-target="scheduleHistorySection" type="button"><strong>Schedule History</strong><span id="dashboardHistory">0 saved</span></button>
+        <button class="dashboard-card" data-jump-target="cloudSection" type="button"><strong>Settings</strong><span id="dashboardSettings">Supabase not configured</span></button>
+      </div>
+    </section>
+    <section class="panel wide attention-panel">
+      <div class="section-head with-action"><div><h2>Needs Attention</h2><p>The most important schedule and submission items to review first.</p></div><span id="attentionStatus" class="count-pill tag good">Good</span></div>
+      <div id="needsAttentionList" class="attention-list"><div class="empty-state">No schedule generated yet.</div></div>
+    </section>
+    <section id="addWorkerSection" class="panel controls-panel">
       <div class="section-head"><h2>Add Worker</h2><p>Enter workers and update their availability whenever it changes.</p></div>
       <form id="workerForm" class="worker-form">
         <label>Name <input id="workerName" type="text" autocomplete="off" placeholder="Employee name" required></label>
@@ -55,13 +70,13 @@
         <button type="submit" class="primary">Add Worker</button>
       </form>
     </section>
-    <section class="panel">
+    <section id="rulesSection" class="panel">
       <div class="section-head"><h2>Schedule Rules</h2><p>Set the week, default shift times, and staffing needed for each day.</p></div>
       <div class="rules-grid"><label>Week starts <input id="weekStart" type="date"></label><label>Open shift <input id="openShift" type="time" value="08:00"></label><label>Close shift <input id="closeShift" type="time" value="16:00"></label><label>Default hours <input id="shiftHours" type="number" min="2" max="12" step="0.5" value="8"></label><label>Lunch after hours <input id="mealBreakHours" type="number" min="1" max="12" step="0.5" value="6"></label></div>
       <div class="staffing-table" id="staffingTable"></div>
-      <div class="actions-row"><button id="generateBtn" class="primary" type="button">Generate Schedule</button><button id="printBtn" class="secondary" type="button">Print Schedule</button></div>
+      <div class="actions-row important-actions"><button id="generateBtn" class="primary" type="button">Generate Schedule</button><button id="printBtn" class="secondary" type="button">Print Schedule Only</button></div>
     </section>
-    <section class="panel wide">
+    <section id="cloudSection" class="panel wide">
       <div class="section-head with-action"><div><h2>Supabase Configuration</h2><p>Connect the employee phone form without replacing local storage.</p></div><span id="cloudStatus" class="count-pill">Not configured</span></div>
       <form id="cloudConfigForm" class="cloud-config-grid">
         <label>Supabase URL <input id="supabaseUrl" type="url" autocomplete="off" placeholder="https://your-project.supabase.co"></label>
@@ -69,7 +84,7 @@
         <div class="actions-row cloud-actions"><button class="primary" type="submit">Save Settings</button><button id="testCloudBtn" class="secondary" type="button">Test Connection</button><button id="syncEmployeesBtn" class="secondary" type="button">Sync Employees</button></div>
       </form>
     </section>
-    <section class="panel wide">
+    <section id="submissionsSection" class="panel wide">
       <div class="section-head with-action"><div><h2>Availability Submissions</h2><p>Review phone submissions and apply availability manually. Existing schedules are never changed.</p></div><div class="actions-row"><span id="submissionCount" class="count-pill">Not synced</span><button id="refreshSubmissionsBtn" class="secondary" type="button">Refresh</button><button id="applyAllBtn" class="primary" type="button">Apply All</button></div></div>
       <div id="submissionsList" class="submissions-list"><div class="empty-state">Configure Supabase, sync employees, then refresh submissions.</div></div>
     </section>
@@ -82,9 +97,9 @@
       </div>
       <div id="historyList" class="history-list"><div class="empty-state">Refresh submissions to load history.</div></div>
     </section>
-    <section class="panel wide"><div class="section-head with-action"><div><h2>Workers</h2><p>Edit permanent employee details, availability, Lead status, and active status.</p></div><span id="workerCount" class="count-pill">0 workers</span></div><div id="workersList" class="workers-list"></div></section>
-    <section class="panel wide"><div class="section-head with-action"><div><h2>Generated Schedule</h2><p>Edit employees, days, shifts, and times directly in the weekly schedule.</p></div><span id="scheduleStatus" class="count-pill">Not generated</span></div><div id="scheduleOutput" class="schedule-output"></div></section>
-    <section class="panel wide"><div class="section-head with-action"><div><h2>Schedule History</h2><p>View, print, rename, or modify saved schedule snapshots.</p></div><div class="actions-row"><span id="scheduleHistoryCount" class="count-pill">0 saved</span><button id="saveCurrentScheduleBtn" class="secondary" type="button">Save Current Schedule</button></div></div><div id="scheduleHistoryList" class="history-list"></div><div id="scheduleHistoryEditor" class="history-editor" hidden><label>New schedule name <input id="historyEditName" type="text" maxlength="160"></label><label>Week of <input id="historyEditWeek" type="date"></label><button id="saveHistoryModificationsBtn" class="primary" type="button">Save Schedule Modifications</button></div></section>
+    <section id="workersSection" class="panel wide"><div class="section-head with-action"><div><h2>Workers</h2><p>Edit permanent employee details, availability, Lead status, and active status.</p></div><span id="workerCount" class="count-pill">0 workers</span></div><div class="worker-filters"><label>Search <input id="workerSearch" type="search" autocomplete="off" placeholder="Search by name"></label><label>Filter <select id="workerFilter"><option value="all">All</option><option value="leads">Leads</option><option value="nonLeads">Non-Leads</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="available">Available this week</option></select></label></div><div id="workersList" class="workers-list"></div></section>
+    <section id="scheduleSection" class="panel wide"><div class="section-head with-action"><div><h2>Generated Schedule</h2><p>Edit employees, days, shifts, and times directly in the weekly schedule.</p></div><span id="scheduleStatus" class="count-pill">Not generated</span></div><div id="scheduleOutput" class="schedule-output"></div></section>
+    <section id="scheduleHistorySection" class="panel wide"><div class="section-head with-action"><div><h2>Schedule History</h2><p>View, print, rename, or modify saved schedule snapshots.</p></div><div class="actions-row important-actions"><span id="scheduleHistoryCount" class="count-pill">0 saved</span><button id="saveCurrentScheduleBtn" class="secondary" type="button">Save Current Schedule</button></div></div><div id="scheduleHistoryList" class="history-list"></div><div id="scheduleHistoryEditor" class="history-editor" hidden><label>New schedule name <input id="historyEditName" type="text" maxlength="160"></label><label>Week of <input id="historyEditWeek" type="date"></label><button id="saveHistoryModificationsBtn" class="primary" type="button">Save Schedule Modifications</button></div></section>
   </main>
   <script src="app.js"></script>
 </body>
