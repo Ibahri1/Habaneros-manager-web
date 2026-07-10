@@ -394,7 +394,16 @@
           bindScheduleEditorEvents();
       }
       function renderShift(day, shift, label) {
-          return '<div class="shift-box"><div class="shift-title"><span>' + label + '</span><span class="small-muted">Default ' + (0, time_1.formatTime)(shift.time) + ' | Need ' + shift.needed + '</span></div><div class="assigned-list">' + (shift.assigned.length ? shift.assigned.map((assignment) => renderAssignment(day, shift.name, assignment.assignmentId)).join("") : '<div class="empty-state">No one assigned.</div>') + '</div></div>';
+          const assigned = shift.assigned.map((assignment) => renderAssignment(day, shift.name, assignment.assignmentId)).join("");
+          const missingCount = Math.max(0, shift.needed - shift.assigned.length);
+          const placeholders = Array.from({ length: missingCount }, (_item, index) => renderMissingAssignment(day, shift.name, index)).join("");
+          const empty = !assigned && !placeholders ? '<div class="empty-state">No one assigned.</div>' : "";
+          return '<div class="shift-box"><div class="shift-title"><span>' + label + '</span><span class="small-muted">Default ' + (0, time_1.formatTime)(shift.time) + ' | Need ' + shift.needed + '</span></div><div class="assigned-list">' + assigned + placeholders + empty + '</div></div>';
+      }
+      function renderMissingAssignment(day, shift, index) {
+          const label = shift === "open" ? "Open" : "Close";
+          const workerOptions = state.workers.filter((worker) => worker.active).map((worker) => '<option value="' + worker.id + '">' + (0, dom_1.escapeHtml)(worker.name) + '</option>').join("");
+          return '<div class="assignment-editor" data-missing-row="' + day + '-' + shift + '-' + index + '"><label>' + label + '<select data-missing-assignment="true" data-missing-day="' + day + '" data-missing-shift="' + shift + '"><option value="">' + label + '</option>' + workerOptions + '</select></label><div class="assignment-summary"><span>Missing worker</span><span>Select to add</span></div></div>';
       }
       function renderAssignment(day, shift, assignmentId) {
           const assignment = (0, scheduleEditor_1.findAssignment)(state.schedule, assignmentId).assignment;
@@ -404,8 +413,20 @@
       }
       function bindScheduleEditorEvents() {
           els.scheduleOutput.querySelectorAll("[data-assignment-field]").forEach((input) => input.addEventListener("change", () => void editScheduleAssignment(input)));
+          els.scheduleOutput.querySelectorAll("[data-missing-assignment]").forEach((input) => input.addEventListener("change", () => void addMissingScheduleAssignment(input)));
           els.scheduleOutput.querySelectorAll("[data-assignment-duplicate]").forEach((button) => button.addEventListener("click", () => void duplicateScheduleAssignment(button.dataset.assignmentDuplicate)));
           els.scheduleOutput.querySelectorAll("[data-assignment-remove]").forEach((button) => button.addEventListener("click", () => void removeScheduleAssignment(button.dataset.assignmentRemove)));
+      }
+      async function addMissingScheduleAssignment(input) {
+          if (!state.schedule || !input.value)
+              return;
+          const worker = findWorker(input.value);
+          const day = input.dataset.missingDay;
+          const shift = input.dataset.missingShift;
+          if (!worker || !day || !shift)
+              return;
+          (0, scheduleEditor_1.addManualAssignment)(state.schedule, day, shift, worker, state.rules);
+          await saveEditedSchedule();
       }
       async function editScheduleAssignment(input) {
           if (!state.schedule)
@@ -1268,6 +1289,7 @@
       exports.moveAssignment = moveAssignment;
       exports.removeAssignment = removeAssignment;
       exports.duplicateAssignment = duplicateAssignment;
+      exports.addManualAssignment = addManualAssignment;
       exports.replaceAssignedEmployee = replaceAssignedEmployee;
       exports.refreshScheduleCoverage = refreshScheduleCoverage;
       const time_1 = require("../../../shared/time");
@@ -1319,6 +1341,31 @@
               return;
           targetDay.shifts[shift].assigned.push({ ...source.assignment, assignmentId: (0, ids_1.createId)() });
       }
+      function addManualAssignment(schedule, day, shift, worker, rules) {
+          const targetDay = schedule.days.find((item) => item.day === day);
+          if (!targetDay)
+              return;
+          const fallbackStart = shift === "open" ? rules.openShift : rules.closeShift;
+          const fallbackEnd = (0, time_1.addHoursToTime)(fallbackStart, Number(rules.shiftHours) || 8);
+          const defaultTimes = worker.shiftTimes[shift];
+          const start = defaultTimes?.start || fallbackStart;
+          const end = defaultTimes?.end || fallbackEnd;
+          const assignment = {
+              assignmentId: (0, ids_1.createId)(),
+              id: worker.id,
+              name: worker.name,
+              position: worker.position,
+              role: worker.role,
+              isManager: worker.isManager,
+              start,
+              end,
+              timeRange: "",
+              durationHours: 0,
+              needsLunch: false
+          };
+          refreshAssignment(assignment, rules.mealBreakHours);
+          targetDay.shifts[shift].assigned.push(assignment);
+      }
       function replaceAssignedEmployee(assignment, worker) {
           assignment.id = worker.id;
           assignment.name = worker.name;
@@ -1334,7 +1381,7 @@
                   shift.hasManager = shift.assigned.some((assignment) => assignment.isManager);
                   shift.hasQualified = shift.hasManager;
                   if (shift.needed > 0 && !shift.hasManager)
-                      warnings.push("Missing lead for " + day.day + " " + shiftName + ".");
+                      warnings.push("No Lead assigned for " + day.day + " " + shiftName + ".");
                   if (shift.assigned.length < shift.needed)
                       warnings.push("Unfilled " + shiftName + " shift on " + day.day + ": " + shift.assigned.length + " of " + shift.needed + " filled.");
               });
@@ -1359,6 +1406,14 @@
               return false;
           return worker.noHourLimits || (stats.hours[worker.id] || 0) + shiftDuration(worker, context.shiftName) <= worker.maxWeeklyHours;
       }
+      function canWorkIgnoringHours(worker, context, stats) {
+          if (!worker.active || !worker.availability.includes(context.day) || context.assignedToday.has(worker.id))
+              return false;
+          const availability = worker.shiftAvailability[context.day] || "Both";
+          if (availability === "Unavailable" || (availability !== "Both" && availability.toLowerCase() !== context.shiftName))
+              return false;
+          return (stats.days[worker.id] || 0) < worker.maxDays;
+      }
       function rankWorkers(workers, stats, assigned = []) {
           const hasStrongWorker = assigned.some((worker) => worker.skillRating >= 7);
           const hasLowWorker = assigned.some((worker) => worker.skillRating <= 4);
@@ -1381,6 +1436,26 @@
               return a.name.localeCompare(b.name);
           });
       }
+      function availableWorkers(workers, context, stats) {
+          return workers.filter((worker) => canWork(worker, context, stats));
+      }
+      function availableLeadCount(workers, context, stats) {
+          return availableWorkers(workers, context, stats).filter((worker) => worker.isManager).length;
+      }
+      function rankLeadCandidates(workers, contexts, context, stats) {
+          return rankWorkers(workers, stats, context.assigned).sort((a, b) => {
+              const aOptions = contexts.filter((item) => item.needed > 0 && !item.assigned.some((worker) => worker.isManager) && canWork(a, item, stats)).length;
+              const bOptions = contexts.filter((item) => item.needed > 0 && !item.assigned.some((worker) => worker.isManager) && canWork(b, item, stats)).length;
+              if (aOptions !== bOptions)
+                  return aOptions - bOptions;
+              return 0;
+          });
+      }
+      function rankFillCandidates(workers, context, stats) {
+          const candidates = rankWorkers(availableWorkers(workers, context, stats), stats, context.assigned);
+          const nonLeads = candidates.filter((worker) => !worker.isManager);
+          return nonLeads.length ? nonLeads : candidates;
+      }
       function assign(worker, context, stats) {
           context.assigned.push(worker);
           context.assignedToday.add(worker.id);
@@ -1394,15 +1469,24 @@
       }
       function explainNoCandidates(context, workers, stats) {
           const active = workers.filter((worker) => worker.active);
+          const label = context.day + " " + context.shiftName;
           if (!active.length)
               return "No active employees are available to schedule.";
           if (!active.some((worker) => worker.availability.includes(context.day)))
-              return "No active employees are available on " + context.day + ".";
-          if (active.every((worker) => context.assignedToday.has(worker.id) || !worker.availability.includes(context.day)))
+              return "No employee available for " + label + ".";
+          const shiftAvailable = active.filter((worker) => {
+              const availability = worker.shiftAvailability[context.day] || "Both";
+              return worker.availability.includes(context.day) && availability !== "Unavailable" && (availability === "Both" || availability.toLowerCase() === context.shiftName);
+          });
+          if (!shiftAvailable.length)
+              return "No employee available for " + label + ".";
+          if (shiftAvailable.every((worker) => context.assignedToday.has(worker.id)))
               return "Available employees are already assigned another shift on " + context.day + ".";
-          if (active.every((worker) => !worker.availability.includes(context.day) || (!worker.noHourLimits && (stats.hours[worker.id] || 0) + shiftDuration(worker, context.shiftName) > worker.maxWeeklyHours)))
-              return "Available employees would exceed maximum weekly hours.";
-          return "Not enough employees meet the scheduling rules.";
+          if (!shiftAvailable.some((worker) => canWorkIgnoringHours(worker, context, stats)))
+              return "Maximum days prevented full staffing for " + label + ".";
+          if (!shiftAvailable.some((worker) => worker.noHourLimits || (stats.hours[worker.id] || 0) + shiftDuration(worker, context.shiftName) <= worker.maxWeeklyHours))
+              return "Hour limits prevented full staffing for " + label + ".";
+          return "Not enough available workers for " + label + ".";
       }
       function generateSchedule(state) {
           const stats = { hours: {}, days: {} };
@@ -1414,26 +1498,33 @@
               warningsByDay.set(day, warnings);
               ["open", "close"].forEach((shiftName) => contexts.push({ day, shiftName, needed: state.rules.staffing[day]?.[shiftName] ?? 0, assigned: [], assignedToday, warnings }));
           });
-          const leadContexts = contexts.filter((context) => context.needed > 0).sort((a, b) => {
-              const count = (context) => state.workers.filter((worker) => worker.isManager && canWork(worker, context, stats)).length;
-              return count(a) - count(b);
-          });
+          const leadContexts = contexts.filter((context) => context.needed > 0).sort((a, b) => availableLeadCount(state.workers, a, stats) - availableLeadCount(state.workers, b, stats));
           leadContexts.forEach((context) => {
-              const lead = rankWorkers(state.workers.filter((worker) => worker.isManager && canWork(worker, context, stats)), stats)[0];
+              const lead = rankLeadCandidates(state.workers.filter((worker) => worker.isManager && canWork(worker, context, stats)), contexts, context, stats)[0];
               if (lead)
                   assign(lead, context, stats);
           });
-          contexts.forEach((context) => {
-              if (context.needed > 0 && !context.assigned.some((worker) => worker.isManager))
-                  context.warnings.push("Missing lead for " + context.day + " " + context.shiftName + ".");
-              while (context.assigned.length < context.needed) {
-                  const next = rankWorkers(state.workers.filter((worker) => canWork(worker, context, stats)), stats, context.assigned)[0];
+          let filled = true;
+          while (filled) {
+              filled = false;
+              const shortContexts = contexts
+                  .filter((context) => context.assigned.length < context.needed)
+                  .sort((a, b) => availableWorkers(state.workers, a, stats).length - availableWorkers(state.workers, b, stats).length);
+              for (const context of shortContexts) {
+                  const next = rankFillCandidates(state.workers, context, stats)[0];
                   if (!next)
-                      break;
+                      continue;
                   assign(next, context, stats);
+                  filled = true;
+              }
+          }
+          contexts.forEach((context) => {
+              if (context.needed > 0 && !context.assigned.some((worker) => worker.isManager)) {
+                  const leadReason = availableLeadCount(state.workers, context, stats) ? "Lead coverage was blocked by other assignments for " : "No Lead available for ";
+                  context.warnings.push(leadReason + context.day + " " + context.shiftName + ".");
               }
               if (context.assigned.length < context.needed)
-                  context.warnings.push("Unfilled " + context.shiftName + " shift on " + context.day + ": " + context.assigned.length + " of " + context.needed + " filled. " + explainNoCandidates(context, state.workers, stats));
+                  context.warnings.push(explainNoCandidates(context, state.workers, stats) + " " + context.assigned.length + " of " + context.needed + " filled.");
           });
           const days = Object.keys(state.rules.staffing).map((day, index) => {
               const shifts = {};
