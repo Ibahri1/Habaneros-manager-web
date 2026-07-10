@@ -15,6 +15,7 @@
       const reports_1 = require("./modules/reports/reports");
       const settings_1 = require("./modules/settings/settings");
       const dom_1 = require("./shared/dom");
+      const ids_1 = require("./shared/ids");
       const login_1 = require("./modules/auth/login");
       let state = (0, defaults_1.defaultAppState)();
       let settings = { darkMode: false, confirmBeforeClose: true };
@@ -93,13 +94,7 @@
               showError("The local data file could not be loaded. The app will start with an empty schedule.", error);
               state = (0, defaults_1.defaultAppState)();
           }
-          if (!state.rules.weekStart)
-              state.rules.weekStart = (0, time_1.nextMonday)();
-          state.workers = state.workers.map((worker) => (0, defaults_1.normalizeWorker)(worker, state.rules));
-          (0, scheduleEditor_1.normalizeSchedule)(state.schedule, state.rules.mealBreakHours);
-          state.scheduleHistory.forEach((entry) => (0, scheduleEditor_1.normalizeSchedule)(entry.schedule, state.rules.mealBreakHours));
-          (0, settings_1.applyTheme)(settings);
-          els.darkModeToggle.checked = settings.darkMode;
+          normalizeLoadedData();
           renderCloudConfig();
           renderAvailabilityInputs();
           renderStaffingInputs();
@@ -107,6 +102,15 @@
           updateAddWorkerHourFields();
           resetWorkerTimeInputs();
           render();
+      }
+      function normalizeLoadedData() {
+          if (!state.rules.weekStart)
+              state.rules.weekStart = (0, time_1.nextMonday)();
+          state.workers = state.workers.map((worker) => (0, defaults_1.normalizeWorker)(worker, state.rules));
+          (0, scheduleEditor_1.normalizeSchedule)(state.schedule, state.rules.mealBreakHours);
+          state.scheduleHistory.forEach((entry) => (0, scheduleEditor_1.normalizeSchedule)(entry.schedule, state.rules.mealBreakHours));
+          (0, settings_1.applyTheme)(settings);
+          els.darkModeToggle.checked = settings.darkMode;
       }
       function bindEvents() {
           els.workerForm.addEventListener("submit", (event) => void addWorker(event));
@@ -474,7 +478,7 @@
       }
       function createHistoryEntry(name, weekStart, schedule) {
           const createdAt = new Date().toISOString();
-          return { id: crypto.randomUUID(), name: name.trim() || "Week of " + formatWeek(weekStart), weekStart, schedule: structuredClone(schedule), createdAt };
+          return { id: (0, ids_1.createId)(), name: name.trim() || "Week of " + formatWeek(weekStart), weekStart, schedule: structuredClone(schedule), createdAt };
       }
       function renderScheduleHistory() {
           els.scheduleHistoryCount.textContent = state.scheduleHistory.length + " saved";
@@ -609,7 +613,7 @@
                   continue;
               }
               const isLead = yes(get("lead")) || yes(get("manager"));
-              const worker = (0, defaults_1.normalizeWorker)({ id: crypto.randomUUID(), employeeCode: get("employee code"), name, position: get("position") || "Crew", role: isLead ? "Lead" : "Crew", isManager: isLead, skillRating: Number(get("skill rating")) || 5, noHourLimits: yes(get("no hour limits")), maxWeeklyHours: Number(get("max weekly hours")) || 45, preferredWeeklyHours: Number(get("preferred weekly hours")) || 40, maxDays: 7, active: !no(get("active")), notes: get("notes"), availability: splitDays(get("available days")), shiftAvailability: splitShiftAvailability(get("shift availability")), shiftTimes: { open: { start: get("default open start"), end: get("default open end") }, close: { start: get("default close start"), end: get("default close end") } } }, state.rules);
+              const worker = (0, defaults_1.normalizeWorker)({ id: (0, ids_1.createId)(), employeeCode: get("employee code"), name, position: get("position") || "Crew", role: isLead ? "Lead" : "Crew", isManager: isLead, skillRating: Number(get("skill rating")) || 5, noHourLimits: yes(get("no hour limits")), maxWeeklyHours: Number(get("max weekly hours")) || 45, preferredWeeklyHours: Number(get("preferred weekly hours")) || 40, maxDays: 7, active: !no(get("active")), notes: get("notes"), availability: splitDays(get("available days")), shiftAvailability: splitShiftAvailability(get("shift availability")), shiftTimes: { open: { start: get("default open start"), end: get("default open end") }, close: { start: get("default close start"), end: get("default close end") } } }, state.rules);
               if (mergeWorker(worker))
                   imported++;
               else
@@ -678,7 +682,12 @@
           event.preventDefault();
           try {
               cloudConfig = await window.habanerosDesktop.saveCloudConfig(readCloudConfigForm());
+              state = await window.habanerosDesktop.loadState();
+              settings = await window.habanerosDesktop.loadSettings();
+              normalizeLoadedData();
               renderCloudConfig();
+              renderStaffingInputs();
+              render();
               await showDialogMessage("Supabase settings saved.");
           }
           catch (error) {
@@ -934,13 +943,24 @@
       const STATE_KEY = "habaneros-web-state";
       const SETTINGS_KEY = "habaneros-web-settings";
       const CLOUD_KEY = "habaneros-web-cloud-config";
+      const MANAGER_STATE_ID = "habaneros-manager";
+      let cloudLoaded = false;
+      let saveChain = Promise.resolve();
       if (!window.habanerosDesktop) {
           let dirty = false;
           const api = {
-              loadState: async () => readStorage(STATE_KEY, (0, defaults_1.defaultAppState)()),
-              saveState: async (state) => writeStorage(STATE_KEY, state),
+              loadState: async () => loadManagerState(),
+              saveState: async (state) => {
+                  writeStorage(STATE_KEY, state);
+                  queueManagerCloudSave();
+                  return structuredClone(state);
+              },
               loadSettings: async () => readStorage(SETTINGS_KEY, (0, defaults_1.defaultSettings)()),
-              saveSettings: async (settings) => writeStorage(SETTINGS_KEY, settings),
+              saveSettings: async (settings) => {
+                  writeStorage(SETTINGS_KEY, settings);
+                  queueManagerCloudSave();
+                  return structuredClone(settings);
+              },
               setDirty: async (isDirty) => (dirty = Boolean(isDirty)),
               restoreFocus: async () => window.focus(),
               showMessage: async (message) => { window.alert(message); },
@@ -950,7 +970,7 @@
               exportData: async (payload) => exportInBrowser(payload),
               importData: async () => importInBrowser(),
               loadCloudConfig: async () => readStorage(CLOUD_KEY, { supabaseUrl: "", anonKey: "" }),
-              saveCloudConfig: async (config) => writeStorage(CLOUD_KEY, config),
+              saveCloudConfig: async (config) => saveManagerCloudConfig(config),
               testCloudConfig: async (config) => {
                   await callRpc(config, "manager_list_availability_submissions", { p_status: "pending" });
                   return { success: true, message: "Connected to Supabase." };
@@ -967,6 +987,115 @@
               }
           };
           window.habanerosDesktop = api;
+      }
+      async function loadManagerState() {
+          const localState = readStorage(STATE_KEY, (0, defaults_1.defaultAppState)());
+          const config = readStorage(CLOUD_KEY, { supabaseUrl: "", anonKey: "" });
+          if (!hasCloudConfig(config)) {
+              setCloudStatus("Cloud save not configured");
+              return localState;
+          }
+          setCloudStatus("Loading...");
+          try {
+              const cloud = await loadManagerCloudState(config);
+              if (cloud?.state) {
+                  persistCloudPayload(cloud);
+                  cloudLoaded = true;
+                  setCloudStatus("Saved");
+                  return structuredClone(cloud.state);
+              }
+              cloudLoaded = true;
+              if (hasMeaningfulState(localState))
+                  await saveManagerCloudState(config);
+              else
+                  setCloudStatus("No cloud data yet");
+              return localState;
+          }
+          catch (error) {
+              setCloudStatus("Cloud load failed");
+              console.warn("Manager cloud state could not be loaded.", error);
+              return localState;
+          }
+      }
+      async function saveManagerCloudConfig(config) {
+          const cleanConfig = { supabaseUrl: config.supabaseUrl.trim().replace(/\/$/, ""), anonKey: config.anonKey.trim() };
+          writeStorage(CLOUD_KEY, cleanConfig);
+          if (!hasCloudConfig(cleanConfig)) {
+              setCloudStatus("Cloud save not configured");
+              return structuredClone(cleanConfig);
+          }
+          setCloudStatus("Loading...");
+          try {
+              const cloud = await loadManagerCloudState(cleanConfig);
+              if (cloud?.state) {
+                  persistCloudPayload({ ...cloud, cloudConfig: cleanConfig });
+                  cloudLoaded = true;
+                  setCloudStatus("Saved");
+              }
+              else {
+                  cloudLoaded = true;
+                  await saveManagerCloudState(cleanConfig);
+              }
+          }
+          catch (error) {
+              setCloudStatus("Cloud save unavailable");
+              console.warn("Manager cloud state could not be initialized.", error);
+          }
+          return structuredClone(cleanConfig);
+      }
+      function queueManagerCloudSave() {
+          const config = readStorage(CLOUD_KEY, { supabaseUrl: "", anonKey: "" });
+          if (!hasCloudConfig(config)) {
+              setCloudStatus("Cloud save not configured");
+              return;
+          }
+          setCloudStatus("Saving...");
+          saveChain = saveChain
+              .then(() => saveManagerCloudState(config))
+              .catch((error) => {
+              setCloudStatus("Save failed");
+              console.warn("Manager cloud state could not be saved.", error);
+          });
+      }
+      async function loadManagerCloudState(config) {
+          const rows = await callRpc(config, "manager_load_app_state", { p_id: MANAGER_STATE_ID });
+          return rows[0]?.state_data || null;
+      }
+      async function saveManagerCloudState(config) {
+          const state = readStorage(STATE_KEY, (0, defaults_1.defaultAppState)());
+          const settings = readStorage(SETTINGS_KEY, (0, defaults_1.defaultSettings)());
+          const payload = { state, settings, cloudConfig: config };
+          if (!cloudLoaded) {
+              const cloud = await loadManagerCloudState(config);
+              if (cloud?.state && hasMeaningfulState(cloud.state) && !hasMeaningfulState(state)) {
+                  persistCloudPayload(cloud);
+                  cloudLoaded = true;
+                  setCloudStatus("Cloud data kept");
+                  return;
+              }
+              cloudLoaded = true;
+          }
+          await callRpc(config, "manager_save_app_state", { p_id: MANAGER_STATE_ID, p_state_data: payload });
+          setCloudStatus("Saved");
+      }
+      function persistCloudPayload(payload) {
+          if (payload.state)
+              writeStorage(STATE_KEY, payload.state);
+          if (payload.settings)
+              writeStorage(SETTINGS_KEY, payload.settings);
+          if (payload.cloudConfig)
+              writeStorage(CLOUD_KEY, payload.cloudConfig);
+      }
+      function hasCloudConfig(config) {
+          return Boolean(config.supabaseUrl && config.anonKey);
+      }
+      function hasMeaningfulState(state) {
+          return state.workers.length > 0 || Boolean(state.schedule) || state.scheduleHistory.length > 0;
+      }
+      function setCloudStatus(message) {
+          const status = document.getElementById("cloudStatus");
+          if (status)
+              status.textContent = message;
       }
       function readStorage(key, fallback) {
           const value = localStorage.getItem(key);
@@ -1104,7 +1233,7 @@
       const defaults_1 = require("../../../shared/defaults");
       function createWorker(input, state) {
           return (0, defaults_1.normalizeWorker)({
-              id: (0, ids_1.randomUUID)(),
+              id: (0, ids_1.createId)(),
               employeeCode: input.employeeCode,
               name: input.name.trim(),
               position: input.position.trim() || "Crew",
@@ -1153,7 +1282,7 @@
               ["open", "close"].forEach((shiftName) => {
                   day.shifts[shiftName].assigned.forEach((assignment) => {
                       if (!assignment.assignmentId)
-                          assignment.assignmentId = (0, ids_1.randomUUID)();
+                          assignment.assignmentId = (0, ids_1.createId)();
                       refreshAssignment(assignment, mealBreakHours);
                   });
               });
@@ -1188,7 +1317,7 @@
           const targetDay = schedule.days.find((item) => item.day === day);
           if (!source || !targetDay)
               return;
-          targetDay.shifts[shift].assigned.push({ ...source.assignment, assignmentId: (0, ids_1.randomUUID)() });
+          targetDay.shifts[shift].assigned.push({ ...source.assignment, assignmentId: (0, ids_1.createId)() });
       }
       function replaceAssignedEmployee(assignment, worker) {
           assignment.id = worker.id;
@@ -1261,7 +1390,7 @@
       function toAssignedWorker(worker, shiftName, mealBreakHours) {
           const { start, end } = worker.shiftTimes[shiftName];
           const durationHours = (0, time_1.getShiftDurationHours)(start, end);
-          return { assignmentId: (0, ids_1.randomUUID)(), id: worker.id, name: worker.name, position: worker.position, role: worker.role, isManager: worker.isManager, start, end, timeRange: (0, time_1.formatTime)(start) + "-" + (0, time_1.formatTime)(end), durationHours, needsLunch: durationHours >= mealBreakHours };
+          return { assignmentId: (0, ids_1.createId)(), id: worker.id, name: worker.name, position: worker.position, role: worker.role, isManager: worker.isManager, start, end, timeRange: (0, time_1.formatTime)(start) + "-" + (0, time_1.formatTime)(end), durationHours, needsLunch: durationHours >= mealBreakHours };
       }
       function explainNoCandidates(context, workers, stats) {
           const active = workers.filter((worker) => worker.active);
@@ -1336,8 +1465,21 @@
     "src/renderer/shared/ids.ts": function(require, exports) {
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
-      exports.randomUUID = randomUUID;
-      function randomUUID() { return crypto.randomUUID(); }
+      exports.createId = createId;
+      function createId() {
+          if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+              return globalThis.crypto.randomUUID();
+          }
+          if (globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
+              const bytes = new Uint8Array(16);
+              globalThis.crypto.getRandomValues(bytes);
+              bytes[6] = (bytes[6] & 0x0f) | 0x40;
+              bytes[8] = (bytes[8] & 0x3f) | 0x80;
+              const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+              return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+          }
+          return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      }
     },
     "src/shared/defaults.ts": function(require, exports) {
       "use strict";
@@ -1501,6 +1643,7 @@
     "./modules/reports/reports": "src/renderer/modules/reports/reports.ts",
     "./modules/settings/settings": "src/renderer/modules/settings/settings.ts",
     "./shared/dom": "src/renderer/shared/dom.ts",
+    "./shared/ids": "src/renderer/shared/ids.ts",
     "./modules/auth/login": "src/renderer/modules/auth/login.ts"
   },
   "src/renderer/browserBridge.ts": {
