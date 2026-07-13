@@ -37,9 +37,10 @@
       <div class="dashboard-grid">
         <button class="dashboard-card" data-jump-target="workersSection" type="button"><strong>Employees</strong><span id="dashboardEmployees">0 workers</span></button>
         <button class="dashboard-card" data-jump-target="submissionsSection" type="button"><strong>Availability Submissions</strong><span id="dashboardSubmissions">Not synced</span></button>
+        <button class="dashboard-card" data-jump-target="settingsSection" type="button"><strong>Availability Status</strong><span id="dashboardAvailabilityStatus">Submitted: 0 | Waiting: 0 | Missing: 0</span></button>
         <button class="dashboard-card primary-card" data-jump-target="rulesSection" type="button"><strong>Generate Schedule</strong><span>Set rules and build the week</span></button>
         <button class="dashboard-card" data-jump-target="scheduleHistorySection" type="button"><strong>Schedule History</strong><span id="dashboardHistory">0 saved</span></button>
-        <button class="dashboard-card" data-jump-target="cloudSection" type="button"><strong>Settings</strong><span id="dashboardSettings">Supabase not configured</span></button>
+        <button class="dashboard-card" data-jump-target="settingsSection" type="button"><strong>Settings</strong><span id="dashboardSettings">Supabase not configured</span></button>
       </div>
     </section>
     <section class="panel wide attention-panel">
@@ -75,6 +76,19 @@
       <div class="rules-grid"><label>Week starts <input id="weekStart" type="date"></label><label>Open shift <input id="openShift" type="time" value="08:00"></label><label>Close shift <input id="closeShift" type="time" value="16:00"></label><label>Default hours <input id="shiftHours" type="number" min="2" max="12" step="0.5" value="8"></label><label>Lunch after hours <input id="mealBreakHours" type="number" min="1" max="12" step="0.5" value="6"></label></div>
       <div class="staffing-table" id="staffingTable"></div>
       <div class="actions-row important-actions"><button id="generateBtn" class="primary" type="button">Generate Schedule</button><button id="printBtn" class="secondary" type="button">Print Schedule Only</button></div>
+    </section>
+    <section id="settingsSection" class="panel wide">
+      <div class="section-head"><h2>Employee Availability Deadline</h2><p>Set when availability is due and when reminder texts should be sent.</p></div>
+      <form id="deadlineSettingsForm" class="cloud-config-grid">
+        <label>Deadline Day <select id="deadlineDay"><option>Sunday</option><option>Monday</option><option>Tuesday</option><option>Wednesday</option><option>Thursday</option><option>Friday</option><option>Saturday</option></select></label>
+        <label>Deadline Time <input id="deadlineTime" type="time" required></label>
+        <label>First Reminder Time <input id="firstReminderTime" type="time" required></label>
+        <label>Second Reminder Time <input id="secondReminderTime" type="time" required></label>
+        <label class="full">Reminder #1 Message <textarea id="firstReminderMessage" rows="3" maxlength="500" required></textarea></label>
+        <label class="full">Reminder #2 Message <textarea id="secondReminderMessage" rows="3" maxlength="500" required></textarea></label>
+        <div class="full deadline-preview" id="deadlinePreview"></div>
+        <div class="actions-row cloud-actions"><button class="primary" type="submit">Save Deadline Settings</button></div>
+      </form>
     </section>
     <section id="cloudSection" class="panel wide">
       <div class="section-head with-action"><div><h2>Supabase Configuration</h2><p>Connect the employee phone form without replacing local storage.</p></div><span id="cloudStatus" class="count-pill">Not configured</span></div>

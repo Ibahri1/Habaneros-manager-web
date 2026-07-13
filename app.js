@@ -8,6 +8,7 @@
       const defaults_1 = require("../shared/defaults");
       const types_1 = require("../shared/types");
       const time_1 = require("../shared/time");
+      const availabilityDeadline_1 = require("../shared/availabilityDeadline");
       const employees_1 = require("./modules/employees/employees");
       const availability_1 = require("./modules/availability/availability");
       const scheduler_1 = require("./modules/scheduling/scheduler");
@@ -18,7 +19,7 @@
       const ids_1 = require("./shared/ids");
       const login_1 = require("./modules/auth/login");
       let state = (0, defaults_1.defaultAppState)();
-      let settings = { darkMode: false, confirmBeforeClose: true };
+      let settings = (0, defaults_1.defaultSettings)();
       let cloudConfig = { supabaseUrl: "", anonKey: "" };
       let submissions = [];
       let historyEditSourceId = null;
@@ -32,6 +33,7 @@
           saveStatus: (0, dom_1.byId)("saveStatus"),
           dashboardEmployees: (0, dom_1.byId)("dashboardEmployees"),
           dashboardSubmissions: (0, dom_1.byId)("dashboardSubmissions"),
+          dashboardAvailabilityStatus: (0, dom_1.byId)("dashboardAvailabilityStatus"),
           dashboardHistory: (0, dom_1.byId)("dashboardHistory"),
           dashboardSettings: (0, dom_1.byId)("dashboardSettings"),
           attentionStatus: (0, dom_1.byId)("attentionStatus"),
@@ -70,6 +72,14 @@
           exportCsvBtn: (0, dom_1.byId)("exportCsvBtn"),
           clearBtn: (0, dom_1.byId)("clearBtn"),
           darkModeToggle: (0, dom_1.byId)("darkModeToggle"),
+          deadlineSettingsForm: (0, dom_1.byId)("deadlineSettingsForm"),
+          deadlineDay: (0, dom_1.byId)("deadlineDay"),
+          deadlineTime: (0, dom_1.byId)("deadlineTime"),
+          firstReminderTime: (0, dom_1.byId)("firstReminderTime"),
+          secondReminderTime: (0, dom_1.byId)("secondReminderTime"),
+          firstReminderMessage: (0, dom_1.byId)("firstReminderMessage"),
+          secondReminderMessage: (0, dom_1.byId)("secondReminderMessage"),
+          deadlinePreview: (0, dom_1.byId)("deadlinePreview"),
           cloudConfigForm: (0, dom_1.byId)("cloudConfigForm"),
           supabaseUrl: (0, dom_1.byId)("supabaseUrl"),
           supabaseAnonKey: (0, dom_1.byId)("supabaseAnonKey"),
@@ -118,10 +128,12 @@
           if (!state.rules.weekStart)
               state.rules.weekStart = (0, time_1.nextMonday)();
           state.workers = state.workers.map((worker) => (0, defaults_1.normalizeWorker)(worker, state.rules));
+          settings = (0, availabilityDeadline_1.normalizeSettings)(settings);
           (0, scheduleEditor_1.normalizeSchedule)(state.schedule, state.rules.mealBreakHours);
           state.scheduleHistory.forEach((entry) => (0, scheduleEditor_1.normalizeSchedule)(entry.schedule, state.rules.mealBreakHours));
           (0, settings_1.applyTheme)(settings);
           els.darkModeToggle.checked = settings.darkMode;
+          renderDeadlineSettings();
       }
       function bindEvents() {
           els.workerForm.addEventListener("submit", (event) => void addWorker(event));
@@ -137,6 +149,8 @@
           els.exportCsvBtn.addEventListener("click", () => void exportData("csv"));
           els.clearBtn.addEventListener("click", () => void clearData());
           els.darkModeToggle.addEventListener("change", () => void updateTheme());
+          els.deadlineSettingsForm.addEventListener("submit", (event) => void saveDeadlineSettings(event));
+          [els.deadlineDay, els.deadlineTime, els.firstReminderTime, els.secondReminderTime, els.firstReminderMessage, els.secondReminderMessage].forEach((input) => input.addEventListener("input", updateDeadlinePreview));
           els.cloudConfigForm.addEventListener("submit", (event) => void saveCloudConfig(event));
           els.testCloudBtn.addEventListener("click", () => void testCloudConfig());
           els.syncEmployeesBtn.addEventListener("click", () => void syncCloudEmployees());
@@ -166,6 +180,7 @@
           els.closeShift.value = state.rules.closeShift;
           els.shiftHours.value = String(state.rules.shiftHours);
           els.mealBreakHours.value = String(state.rules.mealBreakHours);
+          renderDeadlineSettings();
           renderWorkers();
           renderSchedule();
           renderScheduleHistory();
@@ -176,15 +191,22 @@
       function renderDashboard() {
           els.dashboardEmployees.textContent = state.workers.length + " worker" + (state.workers.length === 1 ? "" : "s");
           const pending = submissions.filter((submission) => submission.status === "pending").length;
+          const availabilityStatus = (0, availabilityDeadline_1.calculateAvailabilityStatus)(state.workers, submissions, settings, state.rules.weekStart);
           els.dashboardSubmissions.textContent = submissions.length ? pending + " pending" : "Not synced";
+          els.dashboardAvailabilityStatus.textContent = "Submitted: " + availabilityStatus.submitted + " | Waiting: " + availabilityStatus.waiting + " | Missing: " + availabilityStatus.missing;
           els.dashboardHistory.textContent = state.scheduleHistory.length + " saved";
-          els.dashboardSettings.textContent = cloudConfig.supabaseUrl && cloudConfig.anonKey ? "Supabase configured" : "Supabase not configured";
+          els.dashboardSettings.textContent = "Deadline: " + (0, availabilityDeadline_1.formatDeadlineSummary)(settings);
       }
       function renderNeedsAttention() {
           const items = [];
           const pending = submissions.filter((submission) => submission.status === "pending").length;
+          const availabilityStatus = (0, availabilityDeadline_1.calculateAvailabilityStatus)(state.workers, submissions, settings, state.rules.weekStart);
           if (pending)
               items.push({ level: "bad", text: pending + " availability submission" + (pending === 1 ? "" : "s") + " need review." });
+          if (availabilityStatus.missing)
+              items.push({ level: "bad", text: availabilityStatus.missing + " employee" + (availabilityStatus.missing === 1 ? "" : "s") + " missing availability after the " + (0, availabilityDeadline_1.formatDeadlineSummary)(settings) + " deadline." });
+          else if (availabilityStatus.waiting)
+              items.push({ level: "warn", text: availabilityStatus.waiting + " employee" + (availabilityStatus.waiting === 1 ? "" : "s") + " still waiting to submit availability before the " + (0, availabilityDeadline_1.formatDeadlineSummary)(settings) + " deadline." });
           if (state.schedule) {
               for (const day of state.schedule.days) {
                   const dayWarnings = [...new Set(day.warnings)];
@@ -671,6 +693,7 @@
               if (imported.canceled)
                   return;
               const result = imported.fileName?.toLowerCase().endsWith(".csv") ? importCsv(imported.content || "") : importJson(imported.content || "");
+              settings = await window.habanerosDesktop.saveSettings(settings);
               await saveStateAndRender();
               await showDialogMessage("Import complete.\n\nImported: " + result.imported + "\nSkipped: " + result.skipped + (result.messages.length ? "\n\n" + result.messages.join("\n") : ""));
           }
@@ -694,7 +717,7 @@
                   skipped++;
           }
           if ("settings" in parsed && parsed.settings)
-              settings = { ...settings, ...parsed.settings };
+              settings = (0, availabilityDeadline_1.normalizeSettings)({ ...settings, ...parsed.settings });
           if (importedState.rules)
               state.rules = { ...state.rules, ...importedState.rules };
           if (importedState.schedule) {
@@ -991,6 +1014,56 @@
           state.schedule = null;
           await saveStateAndRender();
       }
+      function renderDeadlineSettings() {
+          settings = (0, availabilityDeadline_1.normalizeSettings)(settings);
+          els.deadlineDay.value = settings.availabilityDeadline.deadlineDay;
+          els.deadlineTime.value = settings.availabilityDeadline.deadlineTime;
+          els.firstReminderTime.value = settings.availabilityDeadline.firstReminderTime;
+          els.secondReminderTime.value = settings.availabilityDeadline.secondReminderTime;
+          els.firstReminderMessage.value = settings.availabilityDeadline.firstReminderMessage;
+          els.secondReminderMessage.value = settings.availabilityDeadline.secondReminderMessage;
+          updateDeadlinePreview();
+      }
+      async function saveDeadlineSettings(event) {
+          event.preventDefault();
+          try {
+              settings = (0, availabilityDeadline_1.normalizeSettings)({
+                  ...settings,
+                  availabilityDeadline: {
+                      deadlineDay: (types_1.DAYS.includes(els.deadlineDay.value) ? els.deadlineDay.value : "Tuesday"),
+                      deadlineTime: els.deadlineTime.value || "23:59",
+                      firstReminderTime: els.firstReminderTime.value || "12:00",
+                      secondReminderTime: els.secondReminderTime.value || "20:00",
+                      firstReminderMessage: els.firstReminderMessage.value.trim(),
+                      secondReminderMessage: els.secondReminderMessage.value.trim()
+                  }
+              });
+              settings = await window.habanerosDesktop.saveSettings(settings);
+              renderDeadlineSettings();
+              renderDashboard();
+              renderNeedsAttention();
+              await showDialogMessage("Availability deadline settings saved.");
+          }
+          catch (error) {
+              showError("Availability deadline settings could not be saved.", error);
+          }
+      }
+      function updateDeadlinePreview() {
+          const previewSettings = (0, availabilityDeadline_1.normalizeSettings)({
+              ...settings,
+              availabilityDeadline: {
+                  deadlineDay: (types_1.DAYS.includes(els.deadlineDay.value) ? els.deadlineDay.value : "Tuesday"),
+                  deadlineTime: els.deadlineTime.value || "23:59",
+                  firstReminderTime: els.firstReminderTime.value || "12:00",
+                  secondReminderTime: els.secondReminderTime.value || "20:00",
+                  firstReminderMessage: els.firstReminderMessage.value,
+                  secondReminderMessage: els.secondReminderMessage.value
+              }
+          });
+          const status = (0, availabilityDeadline_1.calculateAvailabilityStatus)(state.workers, submissions, previewSettings, state.rules.weekStart);
+          const deadlineDate = status.deadlineAt ? status.deadlineAt.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.deadlineTime) : (0, availabilityDeadline_1.formatDeadlineSummary)(previewSettings);
+          els.deadlinePreview.innerHTML = '<strong>Deadline:</strong> ' + (0, dom_1.escapeHtml)(deadlineDate) + '<br><strong>Reminder #1:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.firstReminderTime)) + '<br><strong>Reminder #2:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.secondReminderTime)) + '<br><strong>Status:</strong> Submitted: ' + status.submitted + ' | Waiting: ' + status.waiting + ' | Missing: ' + status.missing + '<br><strong>Reminder #1 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.firstReminderMessage, previewSettings)) + '<br><strong>Reminder #2 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.secondReminderMessage, previewSettings));
+      }
       async function updateTheme() {
           try {
               settings = { ...settings, darkMode: els.darkModeToggle.checked };
@@ -1064,6 +1137,7 @@
       Object.defineProperty(exports, "__esModule", { value: true });
       const defaults_1 = require("../shared/defaults");
       const types_1 = require("../shared/types");
+      const availabilityDeadline_1 = require("../shared/availabilityDeadline");
       const STATE_KEY = "habaneros-web-state";
       const SETTINGS_KEY = "habaneros-web-settings";
       const CLOUD_KEY = "habaneros-web-cloud-config";
@@ -1079,11 +1153,12 @@
                   queueManagerCloudSave();
                   return structuredClone(state);
               },
-              loadSettings: async () => readStorage(SETTINGS_KEY, (0, defaults_1.defaultSettings)()),
+              loadSettings: async () => (0, availabilityDeadline_1.normalizeSettings)(readStorage(SETTINGS_KEY, (0, defaults_1.defaultSettings)())),
               saveSettings: async (settings) => {
-                  writeStorage(SETTINGS_KEY, settings);
+                  const normalized = (0, availabilityDeadline_1.normalizeSettings)(settings);
+                  writeStorage(SETTINGS_KEY, normalized);
                   queueManagerCloudSave();
-                  return structuredClone(settings);
+                  return structuredClone(normalized);
               },
               setDirty: async (isDirty) => (dirty = Boolean(isDirty)),
               restoreFocus: async () => window.focus(),
@@ -1187,7 +1262,7 @@
       }
       async function saveManagerCloudState(config) {
           const state = readStorage(STATE_KEY, (0, defaults_1.defaultAppState)());
-          const settings = readStorage(SETTINGS_KEY, (0, defaults_1.defaultSettings)());
+          const settings = (0, availabilityDeadline_1.normalizeSettings)(readStorage(SETTINGS_KEY, (0, defaults_1.defaultSettings)()));
           const payload = { state, settings, cloudConfig: config };
           if (!cloudLoaded) {
               const cloud = await loadManagerCloudState(config);
@@ -1206,7 +1281,7 @@
           if (payload.state)
               writeStorage(STATE_KEY, payload.state);
           if (payload.settings)
-              writeStorage(SETTINGS_KEY, payload.settings);
+              writeStorage(SETTINGS_KEY, (0, availabilityDeadline_1.normalizeSettings)(payload.settings));
           if (payload.cloudConfig)
               writeStorage(CLOUD_KEY, payload.cloudConfig);
       }
@@ -1680,6 +1755,89 @@
           return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       }
     },
+    "src/shared/availabilityDeadline.ts": function(require, exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.normalizeSettings = normalizeSettings;
+      exports.getAvailabilityWeekStart = getAvailabilityWeekStart;
+      exports.getDeadlineDate = getDeadlineDate;
+      exports.buildReminderMessage = buildReminderMessage;
+      exports.calculateAvailabilityStatus = calculateAvailabilityStatus;
+      exports.formatDeadlineSummary = formatDeadlineSummary;
+      const types_1 = require("./types");
+      const defaults_1 = require("./defaults");
+      const time_1 = require("./time");
+      const DAY_INDEX = {
+          Sunday: 0,
+          Monday: 1,
+          Tuesday: 2,
+          Wednesday: 3,
+          Thursday: 4,
+          Friday: 5,
+          Saturday: 6
+      };
+      function normalizeSettings(settings) {
+          const defaults = (0, defaults_1.defaultSettings)();
+          const deadline = { ...defaults.availabilityDeadline, ...(settings?.availabilityDeadline || {}) };
+          if (!types_1.DAYS.includes(deadline.deadlineDay))
+              deadline.deadlineDay = defaults.availabilityDeadline.deadlineDay;
+          deadline.deadlineTime = normalizeTime(deadline.deadlineTime, defaults.availabilityDeadline.deadlineTime);
+          deadline.firstReminderTime = normalizeTime(deadline.firstReminderTime, defaults.availabilityDeadline.firstReminderTime);
+          deadline.secondReminderTime = normalizeTime(deadline.secondReminderTime, defaults.availabilityDeadline.secondReminderTime);
+          deadline.firstReminderMessage = normalizeMessage(deadline.firstReminderMessage, defaults.availabilityDeadline.firstReminderMessage);
+          deadline.secondReminderMessage = normalizeMessage(deadline.secondReminderMessage, defaults.availabilityDeadline.secondReminderMessage);
+          return { ...defaults, ...(settings || {}), availabilityDeadline: deadline };
+      }
+      function getAvailabilityWeekStart(scheduleWeekStart) {
+          const date = parseDate(scheduleWeekStart);
+          if (!date)
+              return "";
+          date.setDate(date.getDate() - date.getDay());
+          return toIsoDate(date);
+      }
+      function getDeadlineDate(settings, scheduleWeekStart) {
+          const weekStart = parseDate(getAvailabilityWeekStart(scheduleWeekStart));
+          if (!weekStart)
+              return null;
+          const configuredDay = settings.availabilityDeadline.deadlineDay;
+          const daysBeforeWeek = (7 - DAY_INDEX[configuredDay]) % 7;
+          weekStart.setDate(weekStart.getDate() - daysBeforeWeek);
+          const [hours, minutes] = settings.availabilityDeadline.deadlineTime.split(":").map(Number);
+          weekStart.setHours(hours || 0, minutes || 0, 0, 0);
+          return weekStart;
+      }
+      function buildReminderMessage(message, settings) {
+          const deadline = settings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(settings.availabilityDeadline.deadlineTime);
+          return message.toLowerCase().includes("deadline") ? message + " Deadline: " + deadline + "." : message + " Please submit by " + deadline + ".";
+      }
+      function calculateAvailabilityStatus(workers, submissions, settings, scheduleWeekStart, now = new Date()) {
+          const weekStart = getAvailabilityWeekStart(scheduleWeekStart);
+          const deadlineAt = getDeadlineDate(settings, scheduleWeekStart);
+          const activeWorkers = workers.filter((worker) => worker.active && /^\d{4}$/.test(worker.employeeCode));
+          const submittedWorkerIds = new Set(submissions.filter((submission) => submission.weekStart === weekStart).map((submission) => submission.localWorkerId).filter(Boolean));
+          const submitted = activeWorkers.filter((worker) => submittedWorkerIds.has(worker.id)).length;
+          const outstanding = Math.max(0, activeWorkers.length - submitted);
+          const isPastDeadline = Boolean(deadlineAt && now.getTime() > deadlineAt.getTime());
+          return { submitted, waiting: isPastDeadline ? 0 : outstanding, missing: isPastDeadline ? outstanding : 0, deadlineAt, weekStart };
+      }
+      function formatDeadlineSummary(settings) {
+          return settings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(settings.availabilityDeadline.deadlineTime);
+      }
+      function normalizeTime(value, fallback) {
+          return /^\d{2}:\d{2}$/.test(String(value || "")) ? String(value) : fallback;
+      }
+      function normalizeMessage(value, fallback) {
+          const clean = String(value || "").trim();
+          return clean ? clean.slice(0, 500) : fallback;
+      }
+      function parseDate(value) {
+          const date = new Date(value + "T12:00:00");
+          return Number.isNaN(date.getTime()) ? null : date;
+      }
+      function toIsoDate(date) {
+          return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
+      }
+    },
     "src/shared/defaults.ts": function(require, exports) {
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
@@ -1704,7 +1862,18 @@
           };
       }
       function defaultSettings() {
-          return { darkMode: false, confirmBeforeClose: true };
+          return {
+              darkMode: false,
+              confirmBeforeClose: true,
+              availabilityDeadline: {
+                  deadlineDay: "Tuesday",
+                  deadlineTime: "23:59",
+                  firstReminderTime: "12:00",
+                  secondReminderTime: "20:00",
+                  firstReminderMessage: "Habaneros Reminder: Please submit your availability for next week's schedule before tonight's deadline.",
+                  secondReminderMessage: "Habaneros Final Reminder: We have not received your availability. Please submit it before tonight's deadline."
+              }
+          };
       }
       function defaultAppState() {
           return { workers: [], rules: defaultRules(), schedule: null, scheduleHistory: [] };
@@ -1835,6 +2004,7 @@
     "../shared/defaults": "src/shared/defaults.ts",
     "../shared/types": "src/shared/types.ts",
     "../shared/time": "src/shared/time.ts",
+    "../shared/availabilityDeadline": "src/shared/availabilityDeadline.ts",
     "./modules/employees/employees": "src/renderer/modules/employees/employees.ts",
     "./modules/availability/availability": "src/renderer/modules/availability/availability.ts",
     "./modules/scheduling/scheduler": "src/renderer/modules/scheduling/scheduler.ts",
@@ -1847,7 +2017,8 @@
   },
   "src/renderer/browserBridge.ts": {
     "../shared/defaults": "src/shared/defaults.ts",
-    "../shared/types": "src/shared/types.ts"
+    "../shared/types": "src/shared/types.ts",
+    "../shared/availabilityDeadline": "src/shared/availabilityDeadline.ts"
   },
   "src/renderer/modules/auth/login.ts": {},
   "src/renderer/modules/availability/availability.ts": {
@@ -1876,6 +2047,11 @@
   },
   "src/renderer/shared/dom.ts": {},
   "src/renderer/shared/ids.ts": {},
+  "src/shared/availabilityDeadline.ts": {
+    "./types": "src/shared/types.ts",
+    "./defaults": "src/shared/defaults.ts",
+    "./time": "src/shared/time.ts"
+  },
   "src/shared/defaults.ts": {
     "./types": "src/shared/types.ts",
     "./time": "src/shared/time.ts"

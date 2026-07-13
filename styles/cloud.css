@@ -6,6 +6,9 @@
 }
 
 .cloud-actions { grid-column: 1 / -1; }
+.cloud-config-grid .full { grid-column: 1 / -1; }
+.deadline-preview { grid-column: 1 / -1; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfa; color: var(--muted); line-height: 1.5; }
+[data-theme="dark"] .deadline-preview { background: #181d17; }
 .submissions-list { display: grid; gap: 10px; }
 
 .submission-row {
