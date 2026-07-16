@@ -25,8 +25,15 @@
       let historyEditSourceId = null;
       let workerSearchText = "";
       let workerFilterValue = "all";
+      let activeSection = "dashboard";
+      let selectedWorkerId = "";
+      let availabilityDraftWorkerId = "";
+      let availabilityDraft = {};
+      let availabilityDraftDirty = false;
       const els = {
           loginScreen: (0, dom_1.byId)("loginScreen"),
+          toast: (0, dom_1.byId)("toast"),
+          addWorkerSection: (0, dom_1.byId)("addWorkerSection"),
           loginForm: (0, dom_1.byId)("loginForm"),
           loginPassword: (0, dom_1.byId)("loginPassword"),
           loginError: (0, dom_1.byId)("loginError"),
@@ -34,6 +41,8 @@
           dashboardEmployees: (0, dom_1.byId)("dashboardEmployees"),
           dashboardSubmissions: (0, dom_1.byId)("dashboardSubmissions"),
           dashboardAvailabilityStatus: (0, dom_1.byId)("dashboardAvailabilityStatus"),
+          dashboardPrintStatus: (0, dom_1.byId)("dashboardPrintStatus"),
+          dashboardPrintBtn: (0, dom_1.byId)("dashboardPrintBtn"),
           dashboardHistory: (0, dom_1.byId)("dashboardHistory"),
           dashboardSettings: (0, dom_1.byId)("dashboardSettings"),
           attentionStatus: (0, dom_1.byId)("attentionStatus"),
@@ -42,6 +51,8 @@
           workerForm: (0, dom_1.byId)("workerForm"),
           workerName: (0, dom_1.byId)("workerName"),
           employeeCode: (0, dom_1.byId)("employeeCode"),
+          mobilePhone: (0, dom_1.byId)("mobilePhone"),
+          closeAddWorkerBtn: (0, dom_1.byId)("closeAddWorkerBtn"),
           workerPosition: (0, dom_1.byId)("workerPosition"),
           isManager: (0, dom_1.byId)("isManager"),
           skillRating: (0, dom_1.byId)("skillRating"),
@@ -58,8 +69,12 @@
           closeShift: (0, dom_1.byId)("closeShift"),
           shiftHours: (0, dom_1.byId)("shiftHours"),
           mealBreakHours: (0, dom_1.byId)("mealBreakHours"),
+          scheduleRulesDetails: (0, dom_1.byId)("scheduleRulesDetails"),
+          scheduleRulesSummary: (0, dom_1.byId)("scheduleRulesSummary"),
+          scheduleRulesToggleLabel: (0, dom_1.byId)("scheduleRulesToggleLabel"),
           staffingTable: (0, dom_1.byId)("staffingTable"),
           workerSearch: (0, dom_1.byId)("workerSearch"),
+          employeeSelector: (0, dom_1.byId)("employeeSelector"),
           workerFilter: (0, dom_1.byId)("workerFilter"),
           workersList: (0, dom_1.byId)("workersList"),
           workerCount: (0, dom_1.byId)("workerCount"),
@@ -73,6 +88,7 @@
           clearBtn: (0, dom_1.byId)("clearBtn"),
           darkModeToggle: (0, dom_1.byId)("darkModeToggle"),
           deadlineSettingsForm: (0, dom_1.byId)("deadlineSettingsForm"),
+          smsRemindersEnabled: (0, dom_1.byId)("smsRemindersEnabled"),
           deadlineDay: (0, dom_1.byId)("deadlineDay"),
           deadlineTime: (0, dom_1.byId)("deadlineTime"),
           firstReminderTime: (0, dom_1.byId)("firstReminderTime"),
@@ -80,6 +96,10 @@
           firstReminderMessage: (0, dom_1.byId)("firstReminderMessage"),
           secondReminderMessage: (0, dom_1.byId)("secondReminderMessage"),
           deadlinePreview: (0, dom_1.byId)("deadlinePreview"),
+          testSmsPhone: (0, dom_1.byId)("testSmsPhone"),
+          checkRemindersBtn: (0, dom_1.byId)("checkRemindersBtn"),
+          sendTestSmsBtn: (0, dom_1.byId)("sendTestSmsBtn"),
+          reminderStatus: (0, dom_1.byId)("reminderStatus"),
           cloudConfigForm: (0, dom_1.byId)("cloudConfigForm"),
           supabaseUrl: (0, dom_1.byId)("supabaseUrl"),
           supabaseAnonKey: (0, dom_1.byId)("supabaseAnonKey"),
@@ -97,6 +117,7 @@
           historyList: (0, dom_1.byId)("historyList"),
           scheduleHistoryCount: (0, dom_1.byId)("scheduleHistoryCount"),
           saveCurrentScheduleBtn: (0, dom_1.byId)("saveCurrentScheduleBtn"),
+          bulkDeleteHistoryBtn: (0, dom_1.byId)("bulkDeleteHistoryBtn"),
           scheduleHistoryList: (0, dom_1.byId)("scheduleHistoryList"),
           scheduleHistoryEditor: (0, dom_1.byId)("scheduleHistoryEditor"),
           historyEditName: (0, dom_1.byId)("historyEditName"),
@@ -122,6 +143,7 @@
           bindEvents();
           updateAddWorkerHourFields();
           resetWorkerTimeInputs();
+          showSection("dashboard");
           render();
       }
       function normalizeLoadedData() {
@@ -138,31 +160,70 @@
       function bindEvents() {
           els.workerForm.addEventListener("submit", (event) => void addWorker(event));
           els.workerForm.addEventListener("reset", () => queueMicrotask(cleanupAfterDialog));
+          els.closeAddWorkerBtn.addEventListener("click", closeAddWorkerModal);
+          els.addWorkerSection.addEventListener("click", (event) => { if (event.target === els.addWorkerSection)
+              closeAddWorkerModal(); });
           window.addEventListener("focus", cleanupAfterDialog);
           document.addEventListener("visibilitychange", () => { if (!document.hidden)
               cleanupAfterDialog(); });
           els.noHourLimits.addEventListener("change", updateAddWorkerHourFields);
           els.generateBtn.addEventListener("click", () => void generateAndSaveSchedule());
           els.printBtn.addEventListener("click", () => void printSchedule());
+          els.dashboardPrintBtn.addEventListener("click", () => void printSchedule());
           els.importBtn.addEventListener("click", () => void importData());
           els.exportJsonBtn.addEventListener("click", () => void exportData("json"));
           els.exportCsvBtn.addEventListener("click", () => void exportData("csv"));
           els.clearBtn.addEventListener("click", () => void clearData());
           els.darkModeToggle.addEventListener("change", () => void updateTheme());
           els.deadlineSettingsForm.addEventListener("submit", (event) => void saveDeadlineSettings(event));
-          [els.deadlineDay, els.deadlineTime, els.firstReminderTime, els.secondReminderTime, els.firstReminderMessage, els.secondReminderMessage].forEach((input) => input.addEventListener("input", updateDeadlinePreview));
+          [els.smsRemindersEnabled, els.deadlineDay, els.deadlineTime, els.firstReminderTime, els.secondReminderTime, els.firstReminderMessage, els.secondReminderMessage].forEach((input) => input.addEventListener("input", updateDeadlinePreview));
+          els.scheduleRulesDetails.addEventListener("toggle", updateScheduleRulesToggleLabel);
+          els.checkRemindersBtn.addEventListener("click", () => void checkReminderStatus());
+          els.sendTestSmsBtn.addEventListener("click", () => void sendTestSms());
           els.cloudConfigForm.addEventListener("submit", (event) => void saveCloudConfig(event));
           els.testCloudBtn.addEventListener("click", () => void testCloudConfig());
           els.syncEmployeesBtn.addEventListener("click", () => void syncCloudEmployees());
           els.refreshSubmissionsBtn.addEventListener("click", () => void refreshSubmissions());
           els.applyAllBtn.addEventListener("click", () => void applyAllSubmissions());
           els.saveCurrentScheduleBtn.addEventListener("click", () => void saveCurrentScheduleToHistory());
+          els.bulkDeleteHistoryBtn.addEventListener("click", () => void bulkDeleteScheduleHistory());
           els.saveHistoryModificationsBtn.addEventListener("click", () => void saveHistoryModifications());
           [els.historyEmployeeFilter, els.historyWeekFilter, els.historyStatusFilter].forEach((filter) => filter.addEventListener("change", renderHistory));
           [els.weekStart, els.openShift, els.closeShift, els.shiftHours, els.mealBreakHours].forEach((input) => input.addEventListener("change", () => void rulesChanged()));
           els.workerSearch.addEventListener("input", () => { workerSearchText = els.workerSearch.value.trim().toLowerCase(); renderWorkers(); });
+          els.employeeSelector.addEventListener("change", () => void selectWorkerFromDropdown());
           els.workerFilter.addEventListener("change", () => { workerFilterValue = els.workerFilter.value; renderWorkers(); });
-          document.querySelectorAll("[data-jump-target]").forEach((button) => button.addEventListener("click", () => document.getElementById(button.dataset.jumpTarget || "")?.scrollIntoView({ behavior: "smooth", block: "start" })));
+          document.querySelectorAll("[data-nav-section]").forEach((button) => button.addEventListener("click", () => showSection(button.dataset.navSection || "dashboard")));
+          document.querySelectorAll("[data-nav-target]").forEach((button) => button.addEventListener("click", () => showSection(button.dataset.navTarget || "dashboard")));
+          document.querySelectorAll("[data-open-add-worker]").forEach((button) => button.addEventListener("click", openAddWorkerModal));
+      }
+      function showSection(section) {
+          activeSection = section;
+          document.querySelectorAll("[data-section]").forEach((panel) => {
+              panel.hidden = panel.dataset.section !== activeSection;
+          });
+          document.querySelectorAll("[data-nav-section]").forEach((button) => {
+              const active = button.dataset.navSection === activeSection;
+              button.classList.toggle("active", active);
+              button.setAttribute("aria-current", active ? "page" : "false");
+          });
+          window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      function openAddWorkerModal() {
+          els.addWorkerSection.hidden = false;
+          els.workerName.focus();
+      }
+      function closeAddWorkerModal() {
+          els.addWorkerSection.hidden = true;
+          cleanupAfterDialog();
+      }
+      let toastTimer;
+      function showToast(message, level = "good", duration = 7000) {
+          window.clearTimeout(toastTimer);
+          els.toast.textContent = message;
+          els.toast.className = "app-toast " + level;
+          els.toast.hidden = false;
+          toastTimer = window.setTimeout(() => { els.toast.hidden = true; }, duration);
       }
       function renderAvailabilityInputs() {
           els.availabilityChecks.innerHTML = types_1.DAYS.map((day) => '<label class="availability-day"><span>' + day + '</span><select data-add-shift="' + day + '" required><option value="Open">Available for Open</option><option value="Close">Available for Close</option><option value="Both">Available for Both</option><option value="Unavailable" selected>Not Available on ' + day + '</option></select></label>').join("");
@@ -180,6 +241,7 @@
           els.closeShift.value = state.rules.closeShift;
           els.shiftHours.value = String(state.rules.shiftHours);
           els.mealBreakHours.value = String(state.rules.mealBreakHours);
+          renderScheduleRulesSummary();
           renderDeadlineSettings();
           renderWorkers();
           renderSchedule();
@@ -195,7 +257,22 @@
           els.dashboardSubmissions.textContent = submissions.length ? pending + " pending" : "Not synced";
           els.dashboardAvailabilityStatus.textContent = "Submitted: " + availabilityStatus.submitted + " | Waiting: " + availabilityStatus.waiting + " | Missing: " + availabilityStatus.missing;
           els.dashboardHistory.textContent = state.scheduleHistory.length + " saved";
-          els.dashboardSettings.textContent = "Deadline: " + (0, availabilityDeadline_1.formatDeadlineSummary)(settings);
+          els.dashboardSettings.textContent = settings.availabilityDeadline.smsRemindersEnabled ? "Deadline: " + (0, availabilityDeadline_1.formatDeadlineSummary)(settings) : "SMS reminders disabled";
+          els.dashboardPrintStatus.textContent = state.schedule ? "Ready to print" : "No schedule yet";
+      }
+      function renderScheduleRulesSummary() {
+          const staffingTotal = types_1.DAYS.reduce((total, day) => total + state.rules.staffing[day].open + state.rules.staffing[day].close, 0);
+          els.scheduleRulesSummary.textContent =
+              "Open " + (0, time_1.formatTime)(state.rules.openShift) +
+                  " | Close " + (0, time_1.formatTime)(state.rules.closeShift) +
+                  " | Default " + (0, time_1.formatDuration)(state.rules.shiftHours) +
+                  " | Lunch after " + (0, time_1.formatDuration)(state.rules.mealBreakHours) +
+                  " | Week starts " + (0, time_1.formatDate)(state.rules.weekStart) +
+                  " | " + staffingTotal + " minimum weekly spots";
+          updateScheduleRulesToggleLabel();
+      }
+      function updateScheduleRulesToggleLabel() {
+          els.scheduleRulesToggleLabel.textContent = els.scheduleRulesDetails.open ? "Hide Schedule Rules" : "Edit Schedule Rules";
       }
       function renderNeedsAttention() {
           const items = [];
@@ -238,20 +315,13 @@
           try {
               const availability = selectedAvailableDays();
               const shiftAvailability = selectedShiftAvailability(availability);
-              if (!els.workerName.value.trim()) {
-                  await showDialogMessage("Enter an employee name before saving.");
+              if (!els.workerName.value.trim() || !/^\d{4}$/.test(els.employeeCode.value) || state.workers.some((worker) => worker.employeeCode === els.employeeCode.value)) {
+                  showToast("Worker could not be added. Please check the required fields and try again.", "bad", 9000);
                   return;
               }
-              if (!/^\d{4}$/.test(els.employeeCode.value)) {
-                  await showDialogMessage("Enter a valid 4-digit employee code.");
-                  return;
-              }
-              if (state.workers.some((worker) => worker.employeeCode === els.employeeCode.value)) {
-                  await showDialogMessage("That employee code is already assigned.");
-                  return;
-              }
-              state.workers.push((0, employees_1.createWorker)({
+              const newWorker = (0, employees_1.createWorker)({
                   employeeCode: els.employeeCode.value,
+                  mobilePhone: els.mobilePhone.value,
                   name: els.workerName.value,
                   position: els.workerPosition.value,
                   isManager: els.isManager.value === "true",
@@ -266,14 +336,29 @@
                   openEnd: els.workerOpenEnd.value,
                   closeStart: els.workerCloseStart.value,
                   closeEnd: els.workerCloseEnd.value
-              }, state));
+              }, state);
+              state.workers.push(newWorker);
+              selectedWorkerId = newWorker.id;
+              resetAvailabilityDraft();
               resetWorkerForm();
               state.schedule = null;
               await saveState();
               render();
+              closeAddWorkerModal();
+              try {
+                  if (!cloudConfig.supabaseUrl || !cloudConfig.anonKey)
+                      throw new Error("Supabase is not configured.");
+                  await window.habanerosDesktop.syncCloudEmployees(state.workers);
+                  els.cloudStatus.textContent = "Employees synced";
+                  showToast("Worker added and synced successfully.", "good", 9000);
+              }
+              catch {
+                  showToast("Worker added locally, but Supabase sync failed. Please try Sync Employees later.", "warn", 12000);
+              }
           }
           catch (error) {
-              showError("The worker could not be added.", error);
+              console.error("The worker could not be added.", error);
+              showToast("Worker could not be added. Please check the required fields and try again.", "bad", 9000);
           }
       }
       function selectedAvailableDays() {
@@ -289,6 +374,7 @@
       function resetWorkerForm() {
           els.workerForm.reset();
           els.workerPosition.value = "Crew";
+          els.mobilePhone.value = "";
           els.isManager.value = "false";
           els.skillRating.value = "5";
           els.maxWeeklyHours.value = "45";
@@ -326,42 +412,147 @@
       }
       function renderWorkers() {
           els.workerCount.textContent = state.workers.length + " worker" + (state.workers.length === 1 ? "" : "s");
-          const workers = state.workers.filter((worker) => {
-              const matchesSearch = !workerSearchText || worker.name.toLowerCase().includes(workerSearchText);
-              const matchesFilter = workerFilterValue === "all" ||
-                  (workerFilterValue === "leads" && worker.isManager) ||
-                  (workerFilterValue === "nonLeads" && !worker.isManager) ||
-                  (workerFilterValue === "active" && worker.active) ||
-                  (workerFilterValue === "inactive" && !worker.active) ||
-                  (workerFilterValue === "available" && worker.availability.length > 0);
-              return matchesSearch && matchesFilter;
-          });
+          const workers = state.workers.filter(workerMatchesEmployeeFilters);
           if (!state.workers.length) {
+              els.employeeSelector.innerHTML = '<option value="">No employees yet</option>';
               els.workersList.innerHTML = '<div class="empty-state">No workers yet. Add workers and availability to begin.</div>';
               return;
           }
+          if (selectedWorkerId && !findWorker(selectedWorkerId)) {
+              selectedWorkerId = "";
+              resetAvailabilityDraft();
+          }
+          if (selectedWorkerId && !workers.some((worker) => worker.id === selectedWorkerId) && !availabilityDraftDirty) {
+              selectedWorkerId = "";
+              resetAvailabilityDraft();
+          }
+          els.employeeSelector.innerHTML = '<option value="">Select an employee</option>' + workers.map((worker) => {
+              const status = hasAvailabilityEntered(worker) ? "Availability entered" : "Availability not entered";
+              return '<option value="' + worker.id + '" ' + selected(selectedWorkerId, worker.id) + '>' + (0, dom_1.escapeHtml)(worker.name + " - " + status) + '</option>';
+          }).join("");
           if (!workers.length) {
               els.workersList.innerHTML = '<div class="empty-state">No workers match the current search or filter.</div>';
               return;
           }
-          els.workersList.innerHTML = workers.map((worker) => {
-              const tags = (worker.active ? '<span class="tag good">Active</span>' : '<span class="tag bad">Inactive</span>') + (worker.isManager ? '<span class="tag good">Lead</span>' : '<span class="tag warn">Non-Lead</span>') + '<span class="tag">Skill ' + worker.skillRating + '</span>' + (worker.noHourLimits ? '<span class="tag good">No Hour Limits</span>' : '');
-              const daySummary = types_1.DAYS.map((day, index) => '<span class="day-mini ' + (worker.availability.includes(day) ? 'on' : '') + '">' + types_1.SHORT_DAYS[index] + (worker.availability.includes(day) ? ': ' + worker.shiftAvailability[day] : '') + '</span>').join("");
-              const availabilitySummary = worker.availability.length ? worker.availability.map((day) => day.slice(0, 3) + " " + (worker.shiftAvailability[day] || "Both")).join(", ") : "None set";
-              const defaultTimeSummary = "Open " + (0, time_1.formatTime)(worker.shiftTimes.open.start) + "-" + (0, time_1.formatTime)(worker.shiftTimes.open.end) + " | Close " + (0, time_1.formatTime)(worker.shiftTimes.close.start) + "-" + (0, time_1.formatTime)(worker.shiftTimes.close.end);
-              const dayEditors = types_1.DAYS.map((day) => '<label class="worker-availability-day"><span>' + day + '</span><select data-edit-shift-worker="' + worker.id + '" data-edit-shift-day="' + day + '" required><option value="Open" ' + selected(worker.shiftAvailability[day] || 'Unavailable', 'Open') + '>Available for Open</option><option value="Close" ' + selected(worker.shiftAvailability[day] || 'Unavailable', 'Close') + '>Available for Close</option><option value="Both" ' + selected(worker.shiftAvailability[day] || 'Unavailable', 'Both') + '>Available for Both</option><option value="Unavailable" ' + selected(worker.shiftAvailability[day] || 'Unavailable', 'Unavailable') + '>Not Available on ' + day + '</option></select></label>').join("");
-              const hourSummary = worker.noHourLimits ? 'No hour limits' : worker.preferredWeeklyHours + ' preferred hrs | ' + worker.maxWeeklyHours + ' max hrs';
-              return '<article class="worker-card ' + (!worker.active ? 'inactive' : '') + '"><div class="worker-top"><div><h3>' + (0, dom_1.escapeHtml)(worker.name) + '</h3><div class="meta">Code ' + (0, dom_1.escapeHtml)(worker.employeeCode || 'Not set') + ' | ' + (0, dom_1.escapeHtml)(worker.position) + ' | ' + hourSummary + '</div></div><div class="card-actions"><button class="secondary" type="button" data-toggle-active="' + worker.id + '">' + (worker.active ? 'Deactivate' : 'Activate') + '</button><button class="secondary danger" type="button" data-delete="' + worker.id + '">Delete</button></div></div><div class="tag-row">' + tags + '</div><div class="worker-summary"><strong>Available:</strong> ' + (0, dom_1.escapeHtml)(availabilitySummary) + '</div><div class="worker-summary"><strong>Defaults:</strong> ' + (0, dom_1.escapeHtml)(defaultTimeSummary) + '</div>' + (worker.notes ? '<div class="meta">Notes: ' + (0, dom_1.escapeHtml)(worker.notes) + '</div>' : '') + '<div class="worker-days">' + daySummary + '</div><div class="worker-edit"><label>Employee code <input data-edit="' + worker.id + '" data-field="employeeCode" type="text" inputmode="numeric" pattern="\\d{4}" maxlength="4" value="' + (0, dom_1.escapeHtml)(worker.employeeCode) + '"></label><label>Position <input data-edit="' + worker.id + '" data-field="position" type="text" value="' + (0, dom_1.escapeHtml)(worker.position) + '"></label><label>Lead <select data-edit="' + worker.id + '" data-field="isManager"><option value="false" ' + selected(String(worker.isManager), 'false') + '>No</option><option value="true" ' + selected(String(worker.isManager), 'true') + '>Yes</option></select></label><label>Skill Rating <input data-edit="' + worker.id + '" data-field="skillRating" type="number" min="1" max="10" step="1" value="' + worker.skillRating + '"></label><label class="check-row full"><input data-edit="' + worker.id + '" data-field="noHourLimits" type="checkbox" ' + checked(worker.noHourLimits) + '> No Hour Limits</label><label>Preferred Weekly Hours <input data-edit="' + worker.id + '" data-field="preferredWeeklyHours" type="number" min="0" max="168" step="0.5" value="' + worker.preferredWeeklyHours + '" ' + disabled(worker.noHourLimits) + '></label><label>Maximum Weekly Hours <input data-edit="' + worker.id + '" data-field="maxWeeklyHours" type="number" min="0" max="168" step="0.5" value="' + worker.maxWeeklyHours + '" ' + disabled(worker.noHourLimits) + '></label><div class="full time-grid"><label>Default Open Start <input data-worker-time="' + worker.id + '" data-shift="open" data-part="start" type="time" value="' + worker.shiftTimes.open.start + '"></label><label>Default Open End <input data-worker-time="' + worker.id + '" data-shift="open" data-part="end" type="time" value="' + worker.shiftTimes.open.end + '"></label><label>Default Close Start <input data-worker-time="' + worker.id + '" data-shift="close" data-part="start" type="time" value="' + worker.shiftTimes.close.start + '"></label><label>Default Close End <input data-worker-time="' + worker.id + '" data-shift="close" data-part="end" type="time" value="' + worker.shiftTimes.close.end + '"></label></div><label class="full">Notes <textarea data-edit="' + worker.id + '" data-field="notes" rows="2">' + (0, dom_1.escapeHtml)(worker.notes) + '</textarea></label><div class="full worker-days">' + dayEditors + '</div></div></article>';
-          }).join("");
+          const worker = findWorker(selectedWorkerId);
+          if (!worker) {
+              els.workersList.innerHTML = '<div class="employee-results-list">' + workers.slice(0, 10).map((item) => employeeResultRow(item)).join("") + '</div><div class="empty-state">Select an employee from the dropdown to open the full profile editor.</div>';
+          }
+          else {
+              ensureAvailabilityDraft(worker);
+              els.workersList.innerHTML = renderSelectedWorkerProfile(worker);
+          }
+          els.workersList.querySelectorAll("[data-select-worker]").forEach((button) => button.addEventListener("click", () => void selectWorker(button.dataset.selectWorker || "")));
           els.workersList.querySelectorAll("[data-toggle-active]").forEach((button) => button.addEventListener("click", () => void toggleWorkerActive(button.dataset.toggleActive)));
           els.workersList.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => void deleteWorker(button.dataset.delete)));
           els.workersList.querySelectorAll("[data-edit]").forEach((input) => input.addEventListener("change", () => void editWorker(input)));
-          els.workersList.querySelectorAll("[data-edit-shift-worker]").forEach((input) => input.addEventListener("change", () => void editWorkerShiftAvailability(input)));
+          els.workersList.querySelectorAll("[data-availability-draft]").forEach((input) => input.addEventListener("change", () => updateAvailabilityDraft(input)));
+          els.workersList.querySelectorAll("[data-save-availability]").forEach((button) => button.addEventListener("click", () => void saveSelectedWorkerAvailability(button.dataset.saveAvailability || "")));
+          els.workersList.querySelectorAll("[data-cancel-availability]").forEach((button) => button.addEventListener("click", () => void cancelSelectedWorkerAvailability(button.dataset.cancelAvailability || "")));
           els.workersList.querySelectorAll("[data-worker-time]").forEach((input) => input.addEventListener("change", () => void editWorkerDefaultTime(input)));
+      }
+      function workerMatchesEmployeeFilters(worker) {
+          const search = [worker.name, worker.position, worker.employeeCode, worker.mobilePhone].join(" ").toLowerCase();
+          const matchesSearch = !workerSearchText || search.includes(workerSearchText);
+          const matchesFilter = workerFilterValue === "all" ||
+              (workerFilterValue === "leads" && worker.isManager) ||
+              (workerFilterValue === "nonLeads" && !worker.isManager) ||
+              (workerFilterValue === "active" && worker.active) ||
+              (workerFilterValue === "inactive" && !worker.active) ||
+              (workerFilterValue === "availabilityEntered" && hasAvailabilityEntered(worker)) ||
+              (workerFilterValue === "availabilityMissing" && !hasAvailabilityEntered(worker));
+          return matchesSearch && matchesFilter;
+      }
+      function hasAvailabilityEntered(worker) {
+          return types_1.DAYS.some((day) => worker.availability.includes(day) && worker.shiftAvailability[day] !== "Unavailable");
+      }
+      function availabilityStatusTag(worker) {
+          return hasAvailabilityEntered(worker) ? '<span class="tag good">Availability entered</span>' : '<span class="tag warn">Availability not entered</span>';
+      }
+      function employeeResultRow(worker) {
+          return '<div class="employee-result-row ' + (hasAvailabilityEntered(worker) ? 'availability-entered' : 'availability-missing') + '"><div><strong>' + (0, dom_1.escapeHtml)(worker.name) + '</strong><div class="meta">' + (0, dom_1.escapeHtml)(worker.position) + ' | ' + (worker.mobilePhone ? 'Phone set' : 'No phone') + '</div></div><div class="tag-row">' + availabilityStatusTag(worker) + '</div><button class="secondary" data-select-worker="' + worker.id + '" type="button">Open</button></div>';
+      }
+      function renderSelectedWorkerProfile(worker) {
+          const activeTag = worker.active ? '<span class="tag good">Active</span>' : '<span class="tag bad">Inactive</span>';
+          const leadTag = worker.isManager ? '<span class="tag good">Lead</span>' : '<span class="tag">Non-Lead</span>';
+          const phoneTag = worker.mobilePhone ? '<span class="tag good">Phone set</span>' : '<span class="tag warn">No phone</span>';
+          const statusClass = hasAvailabilityEntered(worker) ? 'availability-entered' : 'availability-missing';
+          const availabilityEditors = types_1.DAYS.map((day) => '<label class="worker-availability-day"><span>' + day + '</span><select data-availability-draft="' + day + '"><option value="Open" ' + selected(availabilityDraft[day] || 'Unavailable', 'Open') + '>Available for Open</option><option value="Close" ' + selected(availabilityDraft[day] || 'Unavailable', 'Close') + '>Available for Close</option><option value="Both" ' + selected(availabilityDraft[day] || 'Unavailable', 'Both') + '>Available for Both</option><option value="Unavailable" ' + selected(availabilityDraft[day] || 'Unavailable', 'Unavailable') + '>Not Available on ' + day + '</option></select></label>').join("");
+          return '<article class="employee-profile ' + statusClass + '"><div class="employee-profile-head"><div><h3>' + (0, dom_1.escapeHtml)(worker.name) + '</h3><div class="tag-row">' + activeTag + leadTag + phoneTag + availabilityStatusTag(worker) + (availabilityDraftDirty ? '<span class="tag warn">Unsaved availability changes</span>' : '') + '</div></div><div class="card-actions"><button class="secondary" type="button" data-toggle-active="' + worker.id + '">' + (worker.active ? 'Deactivate' : 'Activate') + '</button><button class="secondary danger" type="button" data-delete="' + worker.id + '">Delete</button></div></div><div class="employee-profile-grid"><section class="employee-profile-section"><h4>Basic Info</h4><div class="profile-field-grid"><label>Name <input data-edit="' + worker.id + '" data-field="name" type="text" value="' + (0, dom_1.escapeHtml)(worker.name) + '"></label><label>Position <input data-edit="' + worker.id + '" data-field="position" type="text" value="' + (0, dom_1.escapeHtml)(worker.position) + '"></label><label>Employee code <input data-edit="' + worker.id + '" data-field="employeeCode" type="text" inputmode="numeric" pattern="\\d{4}" maxlength="4" value="' + (0, dom_1.escapeHtml)(worker.employeeCode) + '"></label><label>Mobile Phone Number <input data-edit="' + worker.id + '" data-field="mobilePhone" type="tel" value="' + (0, dom_1.escapeHtml)(worker.mobilePhone || '') + '" placeholder="+15551234567"></label><label>Lead <select data-edit="' + worker.id + '" data-field="isManager"><option value="false" ' + selected(String(worker.isManager), 'false') + '>No</option><option value="true" ' + selected(String(worker.isManager), 'true') + '>Yes</option></select></label></div></section><section class="employee-profile-section"><h4>Scheduling Defaults</h4><div class="profile-field-grid"><label>Skill Rating <input data-edit="' + worker.id + '" data-field="skillRating" type="number" min="1" max="10" step="1" value="' + worker.skillRating + '"></label><label class="check-row"><input data-edit="' + worker.id + '" data-field="noHourLimits" type="checkbox" ' + checked(worker.noHourLimits) + '> No Hour Limits</label><label>Preferred Weekly Hours <input data-edit="' + worker.id + '" data-field="preferredWeeklyHours" type="number" min="0" max="168" step="0.5" value="' + worker.preferredWeeklyHours + '" ' + disabled(worker.noHourLimits) + '></label><label>Maximum Weekly Hours <input data-edit="' + worker.id + '" data-field="maxWeeklyHours" type="number" min="0" max="168" step="0.5" value="' + worker.maxWeeklyHours + '" ' + disabled(worker.noHourLimits) + '></label><label>Default Open Start <input data-worker-time="' + worker.id + '" data-shift="open" data-part="start" type="time" value="' + worker.shiftTimes.open.start + '"></label><label>Default Open End <input data-worker-time="' + worker.id + '" data-shift="open" data-part="end" type="time" value="' + worker.shiftTimes.open.end + '"></label><label>Default Close Start <input data-worker-time="' + worker.id + '" data-shift="close" data-part="start" type="time" value="' + worker.shiftTimes.close.start + '"></label><label>Default Close End <input data-worker-time="' + worker.id + '" data-shift="close" data-part="end" type="time" value="' + worker.shiftTimes.close.end + '"></label></div></section><section class="employee-profile-section full"><h4>Availability</h4><p class="meta">Change multiple days first, then save availability when ready.</p><div class="employee-availability-grid">' + availabilityEditors + '</div><div class="employee-availability-actions"><button class="primary" data-save-availability="' + worker.id + '" type="button">Save Employee Availability</button><button class="secondary" data-cancel-availability="' + worker.id + '" type="button">Cancel</button></div></section><section class="employee-profile-section full"><h4>Notes</h4><label>Notes <textarea data-edit="' + worker.id + '" data-field="notes" rows="2">' + (0, dom_1.escapeHtml)(worker.notes) + '</textarea></label></section></div></article>';
       }
       function selected(current, value) { return current === value ? "selected" : ""; }
       function checked(value) { return value ? "checked" : ""; }
       function disabled(value) { return value ? "disabled" : ""; }
+      async function selectWorkerFromDropdown() {
+          await selectWorker(els.employeeSelector.value);
+      }
+      async function selectWorker(id) {
+          if (id === selectedWorkerId)
+              return;
+          if (availabilityDraftDirty) {
+              await showDialogMessage("You have unsaved availability changes. Save or cancel before switching employees.");
+              els.employeeSelector.value = selectedWorkerId;
+              return;
+          }
+          selectedWorkerId = id;
+          resetAvailabilityDraft();
+          renderWorkers();
+      }
+      function ensureAvailabilityDraft(worker) {
+          if (availabilityDraftWorkerId === worker.id)
+              return;
+          availabilityDraftWorkerId = worker.id;
+          availabilityDraft = types_1.DAYS.reduce((result, day) => {
+              result[day] = worker.availability.includes(day) ? (worker.shiftAvailability[day] || "Both") : "Unavailable";
+              return result;
+          }, {});
+          availabilityDraftDirty = false;
+      }
+      function resetAvailabilityDraft() {
+          availabilityDraftWorkerId = "";
+          availabilityDraft = {};
+          availabilityDraftDirty = false;
+      }
+      function updateAvailabilityDraft(input) {
+          const day = input.dataset.availabilityDraft;
+          if (!types_1.DAYS.includes(day))
+              return;
+          availabilityDraft[day] = input.value;
+          availabilityDraftDirty = true;
+          renderWorkers();
+      }
+      async function saveSelectedWorkerAvailability(id) {
+          try {
+              const worker = findWorker(id);
+              if (!worker || availabilityDraftWorkerId !== id)
+                  return;
+              worker.availability = types_1.DAYS.filter((day) => availabilityDraft[day] && availabilityDraft[day] !== "Unavailable");
+              worker.shiftAvailability = types_1.DAYS.reduce((result, day) => {
+                  result[day] = worker.availability.includes(day) ? (availabilityDraft[day] || "Both") : "Unavailable";
+                  return result;
+              }, {});
+              availabilityDraftDirty = false;
+              state.schedule = null;
+              await saveStateAndRender();
+              await showDialogMessage("Employee availability saved.");
+              selectedWorkerId = "";
+              resetAvailabilityDraft();
+              renderWorkers();
+          }
+          catch (error) {
+              showError("Employee availability could not be saved.", error);
+          }
+      }
+      async function cancelSelectedWorkerAvailability(id) {
+          const worker = findWorker(id);
+          if (!worker)
+              return;
+          if (!await confirmDialog("Are you sure?", "Yes, cancel changes", "No, keep editing"))
+              return;
+          resetAvailabilityDraft();
+          selectedWorkerId = "";
+          renderWorkers();
+      }
       async function toggleWorkerActive(id) {
           const worker = findWorker(id);
           if (!worker)
@@ -377,6 +568,10 @@
           if (!await confirmDialog("Delete " + worker.name + "? This removes the employee profile and future schedules will no longer use this employee. Saved schedule history will stay saved."))
               return;
           state.workers = state.workers.filter((item) => item.id !== id);
+          if (selectedWorkerId === id) {
+              selectedWorkerId = "";
+              resetAvailabilityDraft();
+          }
           state.schedule = null;
           await saveStateAndRender();
       }
@@ -385,6 +580,9 @@
           if (!worker)
               return;
           switch (input.dataset.field) {
+              case "name":
+                  worker.name = input.value.trim() || worker.name;
+                  break;
               case "employeeCode":
                   if (!/^\d{4}$/.test(input.value)) {
                       await showDialogMessage("Employee code must contain exactly 4 digits.");
@@ -397,6 +595,9 @@
                       return;
                   }
                   worker.employeeCode = input.value;
+                  break;
+              case "mobilePhone":
+                  worker.mobilePhone = input.value.trim();
                   break;
               case "position":
                   worker.position = input.value || "Crew";
@@ -612,12 +813,19 @@
       function renderScheduleHistory() {
           els.scheduleHistoryCount.textContent = state.scheduleHistory.length + " saved";
           els.saveCurrentScheduleBtn.disabled = !state.schedule;
+          els.bulkDeleteHistoryBtn.disabled = true;
           if (!state.scheduleHistory.length) {
               els.scheduleHistoryList.innerHTML = '<div class="empty-state">No saved schedules yet.</div>';
               return;
           }
-          els.scheduleHistoryList.innerHTML = state.scheduleHistory.map((entry) => '<article class="history-row"><div><strong>' + (0, dom_1.escapeHtml)(entry.name) + '</strong><div class="meta">Week of ' + formatWeek(entry.weekStart) + '</div><div class="meta">Saved ' + formatSubmittedAt(entry.createdAt) + '</div></div><label>Schedule name <input data-history-name="' + entry.id + '" type="text" maxlength="160" value="' + (0, dom_1.escapeHtml)(entry.name) + '"></label><div class="card-actions"><button class="secondary" data-history-action="view" data-history-id="' + entry.id + '" type="button">View</button><button class="secondary" data-history-action="print" data-history-id="' + entry.id + '" type="button">Print</button><button class="secondary" data-history-action="rename" data-history-id="' + entry.id + '" type="button">Rename</button><button class="secondary" data-history-action="modify" data-history-id="' + entry.id + '" type="button">Modify</button></div></article>').join("");
+          els.scheduleHistoryList.innerHTML = '<div class="schedule-history-table"><label class="history-table-head"><input id="selectAllScheduleHistory" type="checkbox"><span>Week</span><span>Saved</span><span>Name</span><span>Actions</span></label>' + state.scheduleHistory.map((entry) => '<div class="history-table-row"><input data-history-select="' + entry.id + '" type="checkbox" aria-label="Select ' + (0, dom_1.escapeHtml)(entry.name) + '"><span>Week of ' + formatWeek(entry.weekStart) + '</span><span>' + formatSubmittedAt(entry.createdAt) + '</span><strong>' + (0, dom_1.escapeHtml)(entry.name) + '</strong><div class="card-actions"><button class="secondary" data-history-action="view" data-history-id="' + entry.id + '" type="button">View</button><button class="secondary" data-history-action="print" data-history-id="' + entry.id + '" type="button">Print</button><button class="secondary" data-history-action="rename" data-history-id="' + entry.id + '" type="button">Rename</button><button class="secondary" data-history-action="modify" data-history-id="' + entry.id + '" type="button">Modify</button><button class="secondary danger" data-history-action="delete" data-history-id="' + entry.id + '" type="button">Delete</button></div></div>').join("") + '</div>';
           els.scheduleHistoryList.querySelectorAll("[data-history-action]").forEach((button) => button.addEventListener("click", () => void handleScheduleHistoryAction(button)));
+          els.scheduleHistoryList.querySelectorAll("[data-history-select]").forEach((input) => input.addEventListener("change", updateHistoryDeleteButton));
+          els.scheduleHistoryList.querySelector("#selectAllScheduleHistory")?.addEventListener("change", (event) => {
+              const checkedValue = event.currentTarget.checked;
+              els.scheduleHistoryList.querySelectorAll("[data-history-select]").forEach((input) => { input.checked = checkedValue; });
+              updateHistoryDeleteButton();
+          });
       }
       async function handleScheduleHistoryAction(button) {
           const entry = state.scheduleHistory.find((item) => item.id === button.dataset.historyId);
@@ -631,10 +839,14 @@
               return;
           }
           if (action === "rename") {
-              const input = els.scheduleHistoryList.querySelector("[data-history-name='" + entry.id + "']");
-              if (input?.value.trim())
-                  entry.name = input.value.trim();
+              const nextName = window.prompt("Rename saved schedule", entry.name);
+              if (nextName?.trim())
+                  entry.name = nextName.trim();
               await saveStateAndRender();
+              return;
+          }
+          if (action === "delete") {
+              await deleteScheduleHistoryEntry(entry.id);
               return;
           }
           state.schedule = structuredClone(entry.schedule);
@@ -651,6 +863,42 @@
               els.scheduleHistoryEditor.hidden = true;
           }
           render();
+          if (action === "view")
+              showSection("schedule");
+      }
+      function selectedScheduleHistoryIds() {
+          return Array.from(els.scheduleHistoryList.querySelectorAll("[data-history-select]:checked")).map((input) => input.dataset.historySelect || "").filter(Boolean);
+      }
+      function updateHistoryDeleteButton() {
+          els.bulkDeleteHistoryBtn.disabled = selectedScheduleHistoryIds().length === 0;
+      }
+      async function deleteScheduleHistoryEntry(id) {
+          if (!await confirmDialog("Are you sure you want to delete this saved schedule? This cannot be undone."))
+              return;
+          try {
+              state.scheduleHistory = state.scheduleHistory.filter((entry) => entry.id !== id);
+              await saveStateAndRender();
+              showToast("Saved schedule deleted.", "good", 7000);
+          }
+          catch (error) {
+              showError("The saved schedule could not be deleted.", error);
+          }
+      }
+      async function bulkDeleteScheduleHistory() {
+          const ids = selectedScheduleHistoryIds();
+          if (!ids.length)
+              return;
+          if (!await confirmDialog("Are you sure you want to delete the selected schedule history items? This cannot be undone."))
+              return;
+          try {
+              const selectedIds = new Set(ids);
+              state.scheduleHistory = state.scheduleHistory.filter((entry) => !selectedIds.has(entry.id));
+              await saveStateAndRender();
+              showToast("Selected schedule history items deleted.", "good", 7000);
+          }
+          catch (error) {
+              showError("The selected schedule history items could not be deleted.", error);
+          }
       }
       async function saveCurrentScheduleToHistory() {
           if (!state.schedule)
@@ -745,7 +993,7 @@
                   continue;
               }
               const isLead = yes(get("lead")) || yes(get("manager"));
-              const worker = (0, defaults_1.normalizeWorker)({ id: (0, ids_1.createId)(), employeeCode: get("employee code"), name, position: get("position") || "Crew", role: isLead ? "Lead" : "Crew", isManager: isLead, skillRating: Number(get("skill rating")) || 5, noHourLimits: yes(get("no hour limits")), maxWeeklyHours: Number(get("max weekly hours")) || 45, preferredWeeklyHours: Number(get("preferred weekly hours")) || 40, maxDays: 7, active: !no(get("active")), notes: get("notes"), availability: splitDays(get("available days")), shiftAvailability: splitShiftAvailability(get("shift availability")), shiftTimes: { open: { start: get("default open start"), end: get("default open end") }, close: { start: get("default close start"), end: get("default close end") } } }, state.rules);
+              const worker = (0, defaults_1.normalizeWorker)({ id: (0, ids_1.createId)(), employeeCode: get("employee code"), mobilePhone: get("mobile phone") || get("mobile phone number") || get("phone") || get("phone number"), name, position: get("position") || "Crew", role: isLead ? "Lead" : "Crew", isManager: isLead, skillRating: Number(get("skill rating")) || 5, noHourLimits: yes(get("no hour limits")), maxWeeklyHours: Number(get("max weekly hours")) || 45, preferredWeeklyHours: Number(get("preferred weekly hours")) || 40, maxDays: 7, active: !no(get("active")), notes: get("notes"), availability: splitDays(get("available days")), shiftAvailability: splitShiftAvailability(get("shift availability")), shiftTimes: { open: { start: get("default open start"), end: get("default open end") }, close: { start: get("default close start"), end: get("default close end") } } }, state.rules);
               if (mergeWorker(worker))
                   imported++;
               else
@@ -1016,12 +1264,14 @@
       }
       function renderDeadlineSettings() {
           settings = (0, availabilityDeadline_1.normalizeSettings)(settings);
+          els.smsRemindersEnabled.checked = settings.availabilityDeadline.smsRemindersEnabled;
           els.deadlineDay.value = settings.availabilityDeadline.deadlineDay;
           els.deadlineTime.value = settings.availabilityDeadline.deadlineTime;
           els.firstReminderTime.value = settings.availabilityDeadline.firstReminderTime;
           els.secondReminderTime.value = settings.availabilityDeadline.secondReminderTime;
           els.firstReminderMessage.value = settings.availabilityDeadline.firstReminderMessage;
           els.secondReminderMessage.value = settings.availabilityDeadline.secondReminderMessage;
+          els.sendTestSmsBtn.disabled = !settings.availabilityDeadline.smsRemindersEnabled;
           updateDeadlinePreview();
       }
       async function saveDeadlineSettings(event) {
@@ -1030,6 +1280,7 @@
               settings = (0, availabilityDeadline_1.normalizeSettings)({
                   ...settings,
                   availabilityDeadline: {
+                      smsRemindersEnabled: els.smsRemindersEnabled.checked,
                       deadlineDay: (types_1.DAYS.includes(els.deadlineDay.value) ? els.deadlineDay.value : "Tuesday"),
                       deadlineTime: els.deadlineTime.value || "23:59",
                       firstReminderTime: els.firstReminderTime.value || "12:00",
@@ -1039,6 +1290,7 @@
                   }
               });
               settings = await window.habanerosDesktop.saveSettings(settings);
+              await saveManagerCloudSnapshot().catch((error) => console.warn("Deadline settings were saved locally, but the cloud reminder snapshot was not updated.", error));
               renderDeadlineSettings();
               renderDashboard();
               renderNeedsAttention();
@@ -1052,6 +1304,7 @@
           const previewSettings = (0, availabilityDeadline_1.normalizeSettings)({
               ...settings,
               availabilityDeadline: {
+                  smsRemindersEnabled: els.smsRemindersEnabled.checked,
                   deadlineDay: (types_1.DAYS.includes(els.deadlineDay.value) ? els.deadlineDay.value : "Tuesday"),
                   deadlineTime: els.deadlineTime.value || "23:59",
                   firstReminderTime: els.firstReminderTime.value || "12:00",
@@ -1062,7 +1315,73 @@
           });
           const status = (0, availabilityDeadline_1.calculateAvailabilityStatus)(state.workers, submissions, previewSettings, state.rules.weekStart);
           const deadlineDate = status.deadlineAt ? status.deadlineAt.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.deadlineTime) : (0, availabilityDeadline_1.formatDeadlineSummary)(previewSettings);
-          els.deadlinePreview.innerHTML = '<strong>Deadline:</strong> ' + (0, dom_1.escapeHtml)(deadlineDate) + '<br><strong>Reminder #1:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.firstReminderTime)) + '<br><strong>Reminder #2:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.secondReminderTime)) + '<br><strong>Status:</strong> Submitted: ' + status.submitted + ' | Waiting: ' + status.waiting + ' | Missing: ' + status.missing + '<br><strong>Reminder #1 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.firstReminderMessage, previewSettings)) + '<br><strong>Reminder #2 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.secondReminderMessage, previewSettings));
+          els.sendTestSmsBtn.disabled = !previewSettings.availabilityDeadline.smsRemindersEnabled;
+          els.deadlinePreview.innerHTML = '<strong>SMS reminders:</strong> ' + (previewSettings.availabilityDeadline.smsRemindersEnabled ? 'Enabled' : 'Disabled') + '<br><strong>Deadline:</strong> ' + (0, dom_1.escapeHtml)(deadlineDate) + '<br><strong>Reminder #1:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.firstReminderTime)) + '<br><strong>Reminder #2:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.secondReminderTime)) + '<br><strong>Status:</strong> Submitted: ' + status.submitted + ' | Waiting: ' + status.waiting + ' | Missing: ' + status.missing + '<br><strong>Reminder #1 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.firstReminderMessage, previewSettings)) + '<br><strong>Reminder #2 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.secondReminderMessage, previewSettings));
+      }
+      async function checkReminderStatus() {
+          await invokeReminderFunction("dryRun");
+      }
+      async function sendTestSms() {
+          if (!settings.availabilityDeadline.smsRemindersEnabled) {
+              await showDialogMessage("SMS reminders are disabled. Turn on Enable SMS reminders before sending a test SMS.");
+              return;
+          }
+          if (!els.testSmsPhone.value.trim()) {
+              await showDialogMessage("Enter a test phone number before sending a test SMS.");
+              return;
+          }
+          if (!await confirmDialog("Send one test SMS to " + els.testSmsPhone.value.trim() + "? This will not text employees."))
+              return;
+          await invokeReminderFunction("test", els.testSmsPhone.value.trim());
+      }
+      async function invokeReminderFunction(mode, testPhoneNumber = "") {
+          try {
+              const config = readCloudConfigForm();
+              if (!config.supabaseUrl || !config.anonKey) {
+                  await showDialogMessage("Save Supabase settings before checking SMS reminders.");
+                  return;
+              }
+              els.reminderStatus.textContent = mode === "test" ? "Sending test SMS..." : "Checking reminder status...";
+              const response = await fetch(config.supabaseUrl + "/functions/v1/send-availability-reminders", {
+                  method: "POST",
+                  headers: { apikey: config.anonKey, Authorization: "Bearer " + config.anonKey, "Content-Type": "application/json" },
+                  body: JSON.stringify({ mode, testPhoneNumber })
+              });
+              const result = await response.json().catch(() => ({}));
+              if (!response.ok)
+                  throw new Error(result.error || result.message || "Reminder function failed.");
+              renderReminderFunctionResult(result);
+          }
+          catch (error) {
+              const message = error instanceof Error ? error.message : "Please try again.";
+              els.reminderStatus.textContent = "Reminder check failed: " + message;
+              showError("SMS reminder check failed.", error);
+          }
+      }
+      async function saveManagerCloudSnapshot() {
+          const config = readCloudConfigForm();
+          if (!config.supabaseUrl || !config.anonKey)
+              return;
+          await fetch(config.supabaseUrl + "/rest/v1/rpc/manager_save_app_state", {
+              method: "POST",
+              headers: { apikey: config.anonKey, Authorization: "Bearer " + config.anonKey, "Content-Type": "application/json" },
+              body: JSON.stringify({ p_id: "habaneros-manager", p_state_data: { state, settings, cloudConfig: config } })
+          }).then(async (response) => {
+              if (!response.ok)
+                  throw new Error((await response.text()) || "Cloud settings snapshot could not be saved.");
+          });
+      }
+      function renderReminderFunctionResult(result) {
+          const errors = Array.isArray(result.errors) ? result.errors.length : 0;
+          els.reminderStatus.innerHTML = '<strong>Last reminder check:</strong> ' + (0, dom_1.escapeHtml)(new Date().toLocaleString()) +
+              '<br><strong>SMS reminders:</strong> ' + (0, dom_1.escapeHtml)(result.smsRemindersEnabled === false ? "Disabled" : "Enabled") +
+              '<br><strong>Reminder type:</strong> ' + (0, dom_1.escapeHtml)(String(result.reminderType || "not due")) +
+              '<br><strong>Target week:</strong> ' + (0, dom_1.escapeHtml)(String(result.targetWeek || "not available")) +
+              '<br><strong>Employees checked:</strong> ' + (0, dom_1.escapeHtml)(String(result.employeesChecked ?? 0)) +
+              '<br><strong>Messages sent:</strong> ' + (0, dom_1.escapeHtml)(String(result.messagesSent ?? 0)) +
+              '<br><strong>Employees still waiting:</strong> ' + (0, dom_1.escapeHtml)(String(result.employeesSkipped ?? 0)) +
+              '<br><strong>SMS errors:</strong> ' + (0, dom_1.escapeHtml)(String(errors)) +
+              (result.message ? '<br><strong>Message:</strong> ' + (0, dom_1.escapeHtml)(String(result.message)) : '');
       }
       async function updateTheme() {
           try {
@@ -1112,9 +1431,9 @@
               cleanupAfterDialog();
           }
       }
-      async function confirmDialog(message) {
+      async function confirmDialog(message, confirmLabel, cancelLabel) {
           try {
-              return await window.habanerosDesktop.showConfirmation(message);
+              return await window.habanerosDesktop.showConfirmation(message, { confirmLabel, cancelLabel });
           }
           finally {
               cleanupAfterDialog();
@@ -1163,7 +1482,7 @@
               setDirty: async (isDirty) => (dirty = Boolean(isDirty)),
               restoreFocus: async () => window.focus(),
               showMessage: async (message) => { window.alert(message); },
-              showConfirmation: async (message) => window.confirm(message),
+              showConfirmation: async (message, options) => window.confirm(message + (options?.confirmLabel || options?.cancelLabel ? "\n\n" + (options.confirmLabel || "Confirm") + " / " + (options.cancelLabel || "Cancel") : "")),
               confirmClose: async () => !dirty || window.confirm("Close without saving?"),
               printSchedule: async (html) => printInBrowser(html),
               exportData: async (payload) => exportInBrowser(payload),
@@ -1359,7 +1678,7 @@
       async function syncEmployees(config, workers) {
           const eligible = workers.filter((worker) => /^\d{4}$/.test(worker.employeeCode));
           for (const worker of eligible)
-              await callRpc(config, "manager_upsert_employee", { p_local_worker_id: worker.id, p_name: worker.name, p_employee_code: worker.employeeCode, p_active: worker.active, p_no_hour_limits: worker.noHourLimits });
+              await callRpc(config, "manager_upsert_employee", { p_local_worker_id: worker.id, p_name: worker.name, p_employee_code: worker.employeeCode, p_active: worker.active, p_no_hour_limits: worker.noHourLimits, p_mobile_phone: worker.mobilePhone || "" });
           return { success: true, message: eligible.length + " employee" + (eligible.length === 1 ? "" : "s") + " synced." };
       }
       async function listSubmissions(config, status) {
@@ -1382,9 +1701,9 @@
           return (text ? JSON.parse(text) : null);
       }
       function toCsv(payload) {
-          const rows = [["Name", "Employee Code", "Position", "Lead", "Skill Rating", "No Hour Limits", "Active", "Max Weekly Hours", "Preferred Weekly Hours", "Available Days", "Shift Availability", "Default Open Start", "Default Open End", "Default Close Start", "Default Close End", "Notes"]];
+          const rows = [["Name", "Employee Code", "Mobile Phone", "Position", "Lead", "Skill Rating", "No Hour Limits", "Active", "Max Weekly Hours", "Preferred Weekly Hours", "Available Days", "Shift Availability", "Default Open Start", "Default Open End", "Default Close Start", "Default Close End", "Notes"]];
           for (const worker of payload.state.workers)
-              rows.push([worker.name, worker.employeeCode, worker.position, worker.isManager ? "Yes" : "No", String(worker.skillRating), worker.noHourLimits ? "Yes" : "No", worker.active ? "Yes" : "No", String(worker.maxWeeklyHours), String(worker.preferredWeeklyHours), worker.availability.join(";"), Object.entries(worker.shiftAvailability).map(([day, shift]) => day + ":" + shift).join(";"), worker.shiftTimes.open.start, worker.shiftTimes.open.end, worker.shiftTimes.close.start, worker.shiftTimes.close.end, worker.notes]);
+              rows.push([worker.name, worker.employeeCode, worker.mobilePhone || "", worker.position, worker.isManager ? "Yes" : "No", String(worker.skillRating), worker.noHourLimits ? "Yes" : "No", worker.active ? "Yes" : "No", String(worker.maxWeeklyHours), String(worker.preferredWeeklyHours), worker.availability.join(";"), Object.entries(worker.shiftAvailability).map(([day, shift]) => day + ":" + shift).join(";"), worker.shiftTimes.open.start, worker.shiftTimes.open.end, worker.shiftTimes.close.start, worker.shiftTimes.close.end, worker.notes]);
           return rows.map((row) => row.map((value) => '"' + String(value).replaceAll('"', '""') + '"').join(",")).join("\n");
       }
     },
@@ -1439,6 +1758,7 @@
           return (0, defaults_1.normalizeWorker)({
               id: (0, ids_1.createId)(),
               employeeCode: input.employeeCode,
+              mobilePhone: input.mobilePhone,
               name: input.name.trim(),
               position: input.position.trim() || "Crew",
               role: input.isManager ? "Lead" : "Crew",
@@ -1779,6 +2099,7 @@
       function normalizeSettings(settings) {
           const defaults = (0, defaults_1.defaultSettings)();
           const deadline = { ...defaults.availabilityDeadline, ...(settings?.availabilityDeadline || {}) };
+          deadline.smsRemindersEnabled = deadline.smsRemindersEnabled !== false;
           if (!types_1.DAYS.includes(deadline.deadlineDay))
               deadline.deadlineDay = defaults.availabilityDeadline.deadlineDay;
           deadline.deadlineTime = normalizeTime(deadline.deadlineTime, defaults.availabilityDeadline.deadlineTime);
@@ -1866,6 +2187,7 @@
               darkMode: false,
               confirmBeforeClose: true,
               availabilityDeadline: {
+                  smsRemindersEnabled: true,
                   deadlineDay: "Tuesday",
                   deadlineTime: "23:59",
                   firstReminderTime: "12:00",
@@ -1911,6 +2233,7 @@
           return {
               id: worker.id,
               employeeCode: /^\d{4}$/.test(String(worker.employeeCode || "")) ? String(worker.employeeCode) : "",
+              mobilePhone: String(worker.mobilePhone || "").trim(),
               name: String(worker.name || "Unnamed Worker"),
               position,
               role,
