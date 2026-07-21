@@ -24,6 +24,7 @@
       let authSession = null;
       let activeWorkspace = null;
       let submissions = [];
+      let publishedSchedules = [];
       let historyEditSourceId = null;
       let workerSearchText = "";
       let workerFilterValue = "all";
@@ -92,6 +93,7 @@
           scheduleStatus: (0, dom_1.byId)("scheduleStatus"),
           generateBtn: (0, dom_1.byId)("generateBtn"),
           printBtn: (0, dom_1.byId)("printBtn"),
+          pushScheduleBtn: (0, dom_1.byId)("pushScheduleBtn"),
           importBtn: (0, dom_1.byId)("importBtn"),
           exportJsonBtn: (0, dom_1.byId)("exportJsonBtn"),
           exportCsvBtn: (0, dom_1.byId)("exportCsvBtn"),
@@ -137,7 +139,14 @@
           scheduleHistoryEditor: (0, dom_1.byId)("scheduleHistoryEditor"),
           historyEditName: (0, dom_1.byId)("historyEditName"),
           historyEditWeek: (0, dom_1.byId)("historyEditWeek"),
-          saveHistoryModificationsBtn: (0, dom_1.byId)("saveHistoryModificationsBtn")
+          saveHistoryModificationsBtn: (0, dom_1.byId)("saveHistoryModificationsBtn"),
+          publishedScheduleCount: (0, dom_1.byId)("publishedScheduleCount"),
+          publishedSchedulesList: (0, dom_1.byId)("publishedSchedulesList"),
+          refreshPublishedSchedulesBtn: (0, dom_1.byId)("refreshPublishedSchedulesBtn"),
+          clearAllPublishedSchedulesBtn: (0, dom_1.byId)("clearAllPublishedSchedulesBtn"),
+          clearLastWeekBtn: (0, dom_1.byId)("clearLastWeekBtn"),
+          clearCurrentWeekBtn: (0, dom_1.byId)("clearCurrentWeekBtn"),
+          clearNextWeekBtn: (0, dom_1.byId)("clearNextWeekBtn")
       };
       const workerIdentityFields = [els.workerName, els.employeeCode, els.workerPosition];
       void boot();
@@ -256,10 +265,13 @@
           document.body.classList.remove("login-locked");
           els.loginScreen.hidden = true;
           render();
+          void refreshPublishedSchedules(false);
       }
       function normalizeLoadedData() {
           if (!state.rules.weekStart)
               state.rules.weekStart = (0, time_1.nextMonday)();
+          else
+              state.rules.weekStart = (0, time_1.mondayWeekStart)(state.rules.weekStart);
           state.workers = state.workers.map((worker) => (0, defaults_1.normalizeWorker)(worker, state.rules));
           settings = (0, availabilityDeadline_1.normalizeSettings)(settings);
           (0, scheduleEditor_1.normalizeSchedule)(state.schedule, state.rules.mealBreakHours);
@@ -381,6 +393,7 @@
           els.noHourLimits.addEventListener("change", updateAddWorkerHourFields);
           els.generateBtn.addEventListener("click", () => void generateAndSaveSchedule());
           els.printBtn.addEventListener("click", () => void printSchedule());
+          els.pushScheduleBtn.addEventListener("click", () => void pushScheduleToEmployeeDomain());
           els.dashboardPrintBtn.addEventListener("click", () => void printSchedule());
           els.importBtn.addEventListener("click", () => void importData());
           els.exportJsonBtn.addEventListener("click", () => void exportData("json"));
@@ -402,6 +415,11 @@
           els.saveCurrentScheduleBtn.addEventListener("click", () => void saveCurrentScheduleToHistory());
           els.bulkDeleteHistoryBtn.addEventListener("click", () => void bulkDeleteScheduleHistory());
           els.saveHistoryModificationsBtn.addEventListener("click", () => void saveHistoryModifications());
+          els.refreshPublishedSchedulesBtn.addEventListener("click", () => void refreshPublishedSchedules());
+          els.clearAllPublishedSchedulesBtn.addEventListener("click", () => void clearAllEmployeeDomainSchedules());
+          els.clearLastWeekBtn.addEventListener("click", () => void clearRelativePublishedSchedule(-7));
+          els.clearCurrentWeekBtn.addEventListener("click", () => void clearRelativePublishedSchedule(0));
+          els.clearNextWeekBtn.addEventListener("click", () => void clearRelativePublishedSchedule(7));
           [els.historyEmployeeFilter, els.historyWeekFilter, els.historyStatusFilter].forEach((filter) => filter.addEventListener("change", renderHistory));
           [els.weekStart, els.openShift, els.closeShift, els.shiftHours, els.mealBreakHours].forEach((input) => input.addEventListener("change", () => void rulesChanged()));
           els.workerSearch.addEventListener("input", () => { workerSearchText = els.workerSearch.value.trim().toLowerCase(); renderWorkers(); });
@@ -460,6 +478,7 @@
           renderWorkers();
           renderSchedule();
           renderScheduleHistory();
+          renderPublishedSchedules();
           renderDashboard();
           renderNeedsAttention();
           renderAccountSettings();
@@ -500,7 +519,7 @@
           else if (availabilityStatus.waiting)
               items.push({ level: "warn", text: availabilityStatus.waiting + " employee" + (availabilityStatus.waiting === 1 ? "" : "s") + " still waiting to submit availability before the " + (0, availabilityDeadline_1.formatDeadlineSummary)(settings) + " deadline." });
           if (state.schedule) {
-              for (const day of state.schedule.days) {
+              for (const day of orderedScheduleDays(state.schedule, state.rules.weekStart)) {
                   const dayWarnings = [...new Set(day.warnings)];
                   dayWarnings.filter(isMustFixWarning).forEach((warning) => items.push({ level: "bad", text: warning }));
                   dayWarnings.filter((warning) => !isMustFixWarning(warning)).forEach((warning) => items.push({ level: "warn", text: warning }));
@@ -895,7 +914,8 @@
       function findWorker(id) { return state.workers.find((worker) => worker.id === id); }
       async function rulesChanged() { syncRulesFromInputs(); state.schedule = null; await saveStateAndRender(); }
       function syncRulesFromInputs() {
-          state.rules.weekStart = els.weekStart.value || (0, time_1.nextMonday)();
+          state.rules.weekStart = (0, time_1.mondayWeekStart)(els.weekStart.value || (0, time_1.nextMonday)());
+          els.weekStart.value = state.rules.weekStart;
           state.rules.openShift = els.openShift.value || "08:00";
           state.rules.closeShift = els.closeShift.value || "16:00";
           state.rules.shiftHours = Number(els.shiftHours.value) || 8;
@@ -923,12 +943,14 @@
       function renderSchedule() {
           if (!state.schedule) {
               els.scheduleStatus.textContent = "Not generated";
+              els.pushScheduleBtn.disabled = true;
               els.scheduleOutput.innerHTML = '<div class="empty-state">Add workers, confirm rules, then generate a schedule.</div>';
               return;
           }
+          els.pushScheduleBtn.disabled = false;
           const warningCount = (0, reports_1.countScheduleWarnings)(state);
           els.scheduleStatus.textContent = warningCount ? warningCount + " warning" + (warningCount === 1 ? "" : "s") : "Ready";
-          els.scheduleOutput.innerHTML = state.schedule.days.map((day) => '<article class="schedule-day"><div class="schedule-day-head"><div><strong>' + day.day + '</strong><div class="small-muted">' + (0, time_1.formatDate)(day.date) + '</div></div>' + (day.warnings.length ? '<span class="tag bad">' + day.warnings.length + ' issue' + (day.warnings.length === 1 ? '' : 's') + '</span>' : '<span class="tag good">Covered</span>') + '</div><div class="shift-list">' + renderShift(day.day, day.shifts.open, "Opening") + renderShift(day.day, day.shifts.close, "Closing") + '</div>' + (day.warnings.length ? '<div class="warnings">' + day.warnings.map((warning) => '<div class="warning ' + warningClass(warning) + '">' + (0, dom_1.escapeHtml)(warning) + '</div>').join("") + '</div>' : '') + '</article>').join("");
+          els.scheduleOutput.innerHTML = orderedScheduleDays(state.schedule, state.rules.weekStart).map((day) => '<article class="schedule-day"><div class="schedule-day-head"><div><strong>' + day.day + '</strong><div class="small-muted">' + (0, time_1.formatDate)(day.date) + '</div></div>' + (day.warnings.length ? '<span class="tag bad">' + day.warnings.length + ' issue' + (day.warnings.length === 1 ? '' : 's') + '</span>' : '<span class="tag good">Covered</span>') + '</div><div class="shift-list">' + renderShift(day.day, day.shifts.open, "Opening") + renderShift(day.day, day.shifts.close, "Closing") + '</div>' + (day.warnings.length ? '<div class="warnings">' + day.warnings.map((warning) => '<div class="warning ' + warningClass(warning) + '">' + (0, dom_1.escapeHtml)(warning) + '</div>').join("") + '</div>' : '') + '</article>').join("");
           bindScheduleEditorEvents();
       }
       function warningClass(warning) {
@@ -1035,9 +1057,10 @@
           }
       }
       function buildPrintHtml(schedule, weekStart, title) {
-          const compact = schedule.days.every((day) => day.shifts.open.assigned.length <= 4 && day.shifts.close.assigned.length <= 4);
+          const days = orderedScheduleDays(schedule, weekStart);
+          const compact = days.every((day) => day.shifts.open.assigned.length <= 4 && day.shifts.close.assigned.length <= 4);
           const css = '@page{size:landscape;margin:.2in}*{box-sizing:border-box}body{font-family:Segoe UI,Arial,sans-serif;color:#182018;margin:0;font-size:9.2pt;line-height:1.12}.print-header{display:flex;align-items:end;justify-content:space-between;border-bottom:2px solid #246b46;padding:0 0 4px;margin:0 0 5px}.print-header h1{font-size:15pt;margin:0}.week{font-size:9pt;font-weight:700;color:#4d5a4e}.week-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;align-items:start}.week-grid.expanded{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.day{border:1px solid #aeb9ac;break-inside:avoid;page-break-inside:avoid;min-width:0}.day-head{background:#e9f1e8;border-bottom:1px solid #aeb9ac;padding:4px 5px;font-size:9.5pt;font-weight:800}.day-date{display:block;color:#536154;font-size:7.5pt;font-weight:600}.shift{padding:3px 5px;break-inside:avoid;page-break-inside:avoid}.shift+.shift{border-top:1px solid #cbd3c9}.shift-head{display:flex;justify-content:space-between;gap:4px;margin-bottom:2px;font-size:8.5pt}.shift-time{color:#59665a;white-space:nowrap}.person{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px;border-top:1px dotted #d4dbd2;padding:2px 0;break-inside:avoid;page-break-inside:avoid;font-size:8pt}.person-name{font-weight:700;overflow-wrap:anywhere}.person-time{white-space:nowrap}.empty{color:#697369;font-style:italic;padding:2px 0;font-size:8pt}.day-warnings{border-top:1px solid #d8dfd5;padding:3px 5px;display:grid;gap:1px}.warning{color:#7d301b;font-size:7.5pt;font-weight:700;break-inside:avoid;page-break-inside:avoid}@media print{html,body{width:100%;height:auto}.day,.shift,.person,.warning{break-inside:avoid;page-break-inside:avoid}}';
-          return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + (0, dom_1.escapeHtml)(title) + '</title><style>' + css + '</style></head><body><header class="print-header"><h1>' + (0, dom_1.escapeHtml)(title) + '</h1><div class="week">Week of ' + (0, dom_1.escapeHtml)(weekStart) + '</div></header><main class="week-grid ' + (compact ? 'compact' : 'expanded') + '">' + schedule.days.map((day) => '<section class="day"><div class="day-head">' + day.day + '<span class="day-date">' + (0, time_1.formatDate)(day.date) + '</span></div>' + printShift(day.shifts.open, 'Opening') + printShift(day.shifts.close, 'Closing') + printDayWarnings(day) + '</section>').join('') + '</main></body></html>';
+          return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + (0, dom_1.escapeHtml)(title) + '</title><style>' + css + '</style></head><body><header class="print-header"><h1>' + (0, dom_1.escapeHtml)(title) + '</h1><div class="week">Week of ' + (0, dom_1.escapeHtml)((0, time_1.mondayWeekStart)(weekStart)) + '</div></header><main class="week-grid ' + (compact ? 'compact' : 'expanded') + '">' + days.map((day) => '<section class="day"><div class="day-head">' + day.day + '<span class="day-date">' + (0, time_1.formatDate)(day.date) + '</span></div>' + printShift(day.shifts.open, 'Opening') + printShift(day.shifts.close, 'Closing') + printDayWarnings(day) + '</section>').join('') + '</main></body></html>';
       }
       function printShift(shift, label) {
           return '<div class="shift"><div class="shift-head"><strong>' + label + '</strong><span class="shift-time">' + (0, time_1.formatTime)(shift.time) + '</span></div>' + (shift.assigned.length ? shift.assigned.map((worker) => '<div class="person"><span class="person-name">' + (0, dom_1.escapeHtml)(worker.name) + (worker.isManager ? ' (Lead)' : '') + '</span><span class="person-time">' + worker.timeRange + '</span></div>').join('') : '<div class="empty">No one assigned</div>') + '</div>';
@@ -1051,9 +1074,23 @@
           ];
           return lines.length ? '<div class="day-warnings">' + lines.map((line) => '<div class="warning">' + line + '</div>').join("") + '</div>' : "";
       }
+      function orderedScheduleDays(schedule, weekStart) {
+          const normalizedWeekStart = (0, time_1.mondayWeekStart)(weekStart);
+          return types_1.WEEK_DAYS.map((day) => {
+              const existing = schedule.days.find((item) => item.day === day);
+              if (existing)
+                  return { ...existing, day, date: (0, time_1.getDateForWeekDay)(normalizedWeekStart, day), warnings: [...existing.warnings] };
+              const emptyShift = (shift) => ({ name: shift, needed: 0, time: shift === "open" ? state.rules.openShift : state.rules.closeShift, assigned: [], hasQualified: false, hasManager: false });
+              return { day, date: (0, time_1.getDateForWeekDay)(normalizedWeekStart, day), shifts: { open: emptyShift("open"), close: emptyShift("close") }, warnings: [] };
+          });
+      }
+      function normalizedScheduleSnapshot(schedule, weekStart) {
+          return { ...structuredClone(schedule), days: orderedScheduleDays(schedule, weekStart) };
+      }
       function createHistoryEntry(name, weekStart, schedule) {
           const createdAt = new Date().toISOString();
-          return { id: (0, ids_1.createId)(), name: name.trim() || "Week of " + formatWeek(weekStart), weekStart, schedule: structuredClone(schedule), createdAt };
+          weekStart = (0, time_1.mondayWeekStart)(weekStart);
+          return { id: (0, ids_1.createId)(), name: name.trim() || "Week of " + formatWeek(weekStart), weekStart, schedule: normalizedScheduleSnapshot(schedule, weekStart), createdAt };
       }
       function renderScheduleHistory() {
           els.scheduleHistoryCount.textContent = state.scheduleHistory.length + " saved";
@@ -1095,7 +1132,7 @@
               return;
           }
           state.schedule = structuredClone(entry.schedule);
-          state.rules.weekStart = entry.weekStart;
+          state.rules.weekStart = (0, time_1.mondayWeekStart)(entry.weekStart);
           (0, scheduleEditor_1.normalizeSchedule)(state.schedule, state.rules.mealBreakHours);
           if (action === "modify") {
               historyEditSourceId = entry.id;
@@ -1151,15 +1188,105 @@
           state.scheduleHistory.unshift(createHistoryEntry("Week of " + formatWeek(state.rules.weekStart), state.rules.weekStart, state.schedule));
           await saveStateAndRender();
       }
+      async function pushScheduleToEmployeeDomain() {
+          if (!state.schedule) {
+              await showDialogMessage("Generate a schedule before pushing it to the employee website.");
+              return;
+          }
+          try {
+              const { session, workspace } = await requirePublishedScheduleAccount();
+              const weekStart = (0, time_1.mondayWeekStart)(state.rules.weekStart);
+              await (0, supabaseAuth_1.publishScheduleToEmployeeDomain)(cloudConfig, session, workspace.id, weekStart, normalizedScheduleSnapshot(state.schedule, weekStart));
+              await refreshPublishedSchedules(false);
+              showToast("Schedule pushed to employee website.", "good", 9000);
+          }
+          catch (error) {
+              showError("Schedule could not be pushed to the employee website.", error);
+          }
+      }
+      async function refreshPublishedSchedules(showSuccess = true) {
+          try {
+              const { session, workspace } = await requirePublishedScheduleAccount();
+              publishedSchedules = await (0, supabaseAuth_1.listPublishedSchedules)(cloudConfig, session, workspace.id);
+              renderPublishedSchedules();
+              if (showSuccess)
+                  showToast("Published schedules refreshed.", "good", 5000);
+          }
+          catch (error) {
+              publishedSchedules = [];
+              renderPublishedSchedules("Published schedules could not be loaded.");
+              console.warn("Published schedules could not be loaded.", error);
+              if (showSuccess)
+                  showError("Published schedules could not be loaded.", error);
+          }
+      }
+      function renderPublishedSchedules(message = "") {
+          els.publishedScheduleCount.textContent = publishedSchedules.length + " published";
+          els.clearAllPublishedSchedulesBtn.disabled = publishedSchedules.length === 0;
+          if (message) {
+              els.publishedSchedulesList.innerHTML = '<div class="empty-state">' + (0, dom_1.escapeHtml)(message) + '</div>';
+              return;
+          }
+          if (!publishedSchedules.length) {
+              els.publishedSchedulesList.innerHTML = '<div class="empty-state">No schedules are currently published to the employee website.</div>';
+              return;
+          }
+          els.publishedSchedulesList.innerHTML = publishedSchedules.map((entry) => '<article class="history-row"><div><strong>Week of ' + formatWeek(entry.weekStart) + '</strong><div class="meta">Published ' + formatSubmittedAt(entry.publishedAt) + '</div></div><div class="history-details"><span>Updated: ' + formatSubmittedAt(entry.updatedAt) + '</span><span>Visible on employee website</span></div><button class="secondary danger" data-published-clear="' + entry.weekStart + '" type="button">Clear from Employee Domain</button></article>').join("");
+          els.publishedSchedulesList.querySelectorAll("[data-published-clear]").forEach((button) => button.addEventListener("click", () => void clearEmployeeDomainSchedule(button.dataset.publishedClear || "")));
+      }
+      async function clearRelativePublishedSchedule(dayOffset) {
+          await clearEmployeeDomainSchedule((0, time_1.addDays)((0, time_1.mondayWeekStart)(state.rules.weekStart || (0, time_1.nextMonday)()), dayOffset));
+      }
+      async function clearEmployeeDomainSchedule(weekStart) {
+          if (!weekStart)
+              return;
+          weekStart = (0, time_1.mondayWeekStart)(weekStart);
+          if (!await confirmDialog("Are you sure you want to remove this schedule from the employee website?"))
+              return;
+          try {
+              const { session, workspace } = await requirePublishedScheduleAccount();
+              await (0, supabaseAuth_1.clearPublishedSchedule)(cloudConfig, session, workspace.id, weekStart);
+              publishedSchedules = publishedSchedules.filter((entry) => entry.weekStart !== weekStart);
+              renderPublishedSchedules();
+              showToast("Schedule removed from employee website.", "good", 9000);
+          }
+          catch (error) {
+              showError("Schedule could not be removed from the employee website.", error);
+          }
+      }
+      async function clearAllEmployeeDomainSchedules() {
+          if (!publishedSchedules.length)
+              return;
+          if (!await confirmDialog("Are you sure you want to remove this schedule from the employee website?"))
+              return;
+          try {
+              const { session, workspace } = await requirePublishedScheduleAccount();
+              await (0, supabaseAuth_1.clearAllPublishedSchedules)(cloudConfig, session, workspace.id);
+              publishedSchedules = [];
+              renderPublishedSchedules();
+              showToast("Schedule removed from employee website.", "good", 9000);
+          }
+          catch (error) {
+              showError("Published schedules could not be removed from the employee website.", error);
+          }
+      }
+      async function requirePublishedScheduleAccount() {
+          if (!authSession || !activeWorkspace)
+              throw new Error("Log in before publishing schedules.");
+          if (!cloudConfig.supabaseUrl || !cloudConfig.anonKey)
+              throw new Error("Supabase is not configured.");
+          authSession = await (0, supabaseAuth_1.refreshAuthSession)(cloudConfig, authSession);
+          (0, supabaseAuth_1.storeAuthSession)(authSession);
+          return { session: authSession, workspace: activeWorkspace };
+      }
       async function saveHistoryModifications() {
           if (!historyEditSourceId || !state.schedule)
               return;
           const source = state.scheduleHistory.find((entry) => entry.id === historyEditSourceId);
           if (!source)
               return;
-          const weekStart = els.historyEditWeek.value || source.weekStart;
-          const schedule = structuredClone(state.schedule);
-          schedule.days.forEach((day, index) => { day.date = (0, time_1.addDays)(weekStart, index); });
+          const weekStart = (0, time_1.mondayWeekStart)(els.historyEditWeek.value || source.weekStart);
+          const schedule = normalizedScheduleSnapshot(state.schedule, weekStart);
           state.scheduleHistory.unshift(createHistoryEntry(els.historyEditName.value || source.name + " - Modified", weekStart, schedule));
           historyEditSourceId = null;
           els.scheduleHistoryEditor.hidden = true;
@@ -1494,7 +1621,7 @@
           return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
       }
       function formatWeek(value) {
-          const date = new Date(value + "T12:00:00");
+          const date = (0, time_1.parseLocalDate)(value);
           return Number.isNaN(date.getTime()) ? (0, dom_1.escapeHtml)(value) : date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
       }
       async function clearData() {
@@ -2002,6 +2129,10 @@
       exports.getOrCreateDefaultWorkspace = getOrCreateDefaultWorkspace;
       exports.loadWorkspaceSnapshot = loadWorkspaceSnapshot;
       exports.saveWorkspaceSnapshot = saveWorkspaceSnapshot;
+      exports.publishScheduleToEmployeeDomain = publishScheduleToEmployeeDomain;
+      exports.listPublishedSchedules = listPublishedSchedules;
+      exports.clearPublishedSchedule = clearPublishedSchedule;
+      exports.clearAllPublishedSchedules = clearAllPublishedSchedules;
       const AUTH_SESSION_KEY = "habaneros-auth-session";
       function loadStoredAuthSession() {
           const value = localStorage.getItem(AUTH_SESSION_KEY);
@@ -2065,6 +2196,23 @@
       async function saveWorkspaceSnapshot(config, session, workspace, snapshot) {
           await rpc(config, session, "auth_save_workspace_app_state", { p_workspace_id: workspace.id, p_state_data: snapshot });
       }
+      async function publishScheduleToEmployeeDomain(config, session, workspaceId, weekStart, schedule) {
+          const rows = await rpc(config, session, "publish_schedule_to_employee_domain", { p_workspace_id: workspaceId, p_week_start: weekStart, p_schedule_json: schedule });
+          const row = rows[0];
+          if (!row || !row.schedule_json)
+              throw new Error("The published schedule was not returned.");
+          return publishedRecordFromRow(row);
+      }
+      async function listPublishedSchedules(config, session, workspaceId) {
+          const rows = await rpc(config, session, "list_published_schedules", { p_workspace_id: workspaceId });
+          return rows.map(publishedSummaryFromRow);
+      }
+      async function clearPublishedSchedule(config, session, workspaceId, weekStart) {
+          await rpc(config, session, "clear_published_schedule", { p_workspace_id: workspaceId, p_week_start: weekStart });
+      }
+      async function clearAllPublishedSchedules(config, session, workspaceId) {
+          await rpc(config, session, "clear_all_published_schedules", { p_workspace_id: workspaceId });
+      }
       async function authFetch(config, path, body) {
           if (!config.supabaseUrl || !config.anonKey)
               throw new Error("Supabase URL and public anon key are required.");
@@ -2111,6 +2259,12 @@
               expiresAt: response.expires_at ? response.expires_at * 1000 : Date.now() + Math.max(1, response.expires_in || 3600) * 1000,
               user: { id: response.user.id, email: response.user.email }
           };
+      }
+      function publishedSummaryFromRow(row) {
+          return { id: row.id, workspaceId: row.workspace_id, weekStart: row.week_start, publishedAt: row.published_at, updatedAt: row.updated_at };
+      }
+      function publishedRecordFromRow(row) {
+          return { ...publishedSummaryFromRow(row), schedule: row.schedule_json };
       }
       function cleanUrl(config) {
           return config.supabaseUrl.trim().replace(/\/$/, "");
@@ -2273,6 +2427,7 @@
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.generateSchedule = generateSchedule;
       const time_1 = require("../../../shared/time");
+      const types_1 = require("../../../shared/types");
       const ids_1 = require("../../shared/ids");
       function shiftDuration(worker, shiftName) { return (0, time_1.getShiftDurationHours)(worker.shiftTimes[shiftName].start, worker.shiftTimes[shiftName].end); }
       function canWork(worker, context, stats) {
@@ -2371,7 +2526,8 @@
           const stats = { hours: {}, days: {} };
           const warningsByDay = new Map();
           const contexts = [];
-          Object.keys(state.rules.staffing).forEach((day) => {
+          const weekStart = (0, time_1.mondayWeekStart)(state.rules.weekStart);
+          types_1.WEEK_DAYS.forEach((day) => {
               const assignedToday = new Set();
               const warnings = [];
               warningsByDay.set(day, warnings);
@@ -2405,14 +2561,14 @@
               if (context.assigned.length < context.needed)
                   context.warnings.push(explainNoCandidates(context, state.workers, stats) + " " + context.assigned.length + " of " + context.needed + " filled.");
           });
-          const days = Object.keys(state.rules.staffing).map((day, index) => {
+          const days = types_1.WEEK_DAYS.map((day) => {
               const shifts = {};
               ["open", "close"].forEach((shiftName) => {
                   const context = contexts.find((item) => item.day === day && item.shiftName === shiftName);
                   const hasLead = context.assigned.some((worker) => worker.isManager);
                   shifts[shiftName] = { name: shiftName, needed: context.needed, time: shiftName === "open" ? state.rules.openShift : state.rules.closeShift, assigned: context.assigned.map((worker) => toAssignedWorker(worker, shiftName, state.rules.mealBreakHours)), hasQualified: hasLead, hasManager: hasLead };
               });
-              return { day, date: (0, time_1.addDays)(state.rules.weekStart, index), shifts, warnings: warningsByDay.get(day) };
+              return { day, date: (0, time_1.getDateForWeekDay)(weekStart, day), shifts, warnings: warningsByDay.get(day) };
           });
           return { createdAt: new Date().toISOString(), days };
       }
@@ -2638,9 +2794,14 @@
       exports.getShiftDurationHours = getShiftDurationHours;
       exports.formatTime = formatTime;
       exports.formatDuration = formatDuration;
+      exports.parseLocalDate = parseLocalDate;
+      exports.toIsoDate = toIsoDate;
+      exports.mondayWeekStart = mondayWeekStart;
       exports.nextMonday = nextMonday;
       exports.addDays = addDays;
+      exports.getDateForWeekDay = getDateForWeekDay;
       exports.formatDate = formatDate;
+      const types_1 = require("./types");
       function timeToMinutes(value) {
           const [hourText, minuteText] = String(value || "00:00").split(":");
           return (Number(hourText) || 0) * 60 + (Number(minuteText) || 0);
@@ -2673,27 +2834,54 @@
               return whole + " hr" + (whole === 1 ? "" : "s");
           return whole + " hr " + minutes + " min";
       }
+      function parseLocalDate(value) {
+          if (value instanceof Date) {
+              const date = new Date(value);
+              date.setHours(12, 0, 0, 0);
+              return date;
+          }
+          const [year, month, day] = String(value || "").slice(0, 10).split("-").map(Number);
+          const date = year && month && day ? new Date(year, month - 1, day) : new Date();
+          date.setHours(12, 0, 0, 0);
+          return date;
+      }
+      function toIsoDate(date) {
+          return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
+      }
+      function mondayWeekStart(value) {
+          const date = parseLocalDate(value);
+          const day = date.getDay();
+          const offset = day === 0 ? -6 : 1 - day;
+          date.setDate(date.getDate() + offset);
+          return toIsoDate(date);
+      }
       function nextMonday() {
           const date = new Date();
           const day = date.getDay();
           const distance = (8 - day) % 7 || 7;
           date.setDate(date.getDate() + distance);
-          return date.toISOString().slice(0, 10);
+          date.setHours(12, 0, 0, 0);
+          return toIsoDate(date);
       }
       function addDays(dateString, days) {
-          const date = new Date(dateString + "T12:00:00");
+          const date = parseLocalDate(dateString);
           date.setDate(date.getDate() + days);
-          return date.toISOString();
+          return toIsoDate(date);
+      }
+      function getDateForWeekDay(weekStart, dayName) {
+          const index = types_1.DAYS.indexOf(dayName);
+          return addDays(mondayWeekStart(weekStart), index >= 0 ? index : 0);
       }
       function formatDate(dateString) {
-          return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(dateString));
+          return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(parseLocalDate(dateString));
       }
     },
     "src/shared/types.ts": function(require, exports) {
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
-      exports.SHORT_DAYS = exports.DAYS = void 0;
+      exports.SHORT_DAYS = exports.WEEK_DAYS = exports.DAYS = void 0;
       exports.DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+      exports.WEEK_DAYS = exports.DAYS;
       exports.SHORT_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     }
   };
@@ -2757,7 +2945,9 @@
     "./types": "src/shared/types.ts",
     "./time": "src/shared/time.ts"
   },
-  "src/shared/time.ts": {},
+  "src/shared/time.ts": {
+    "./types": "src/shared/types.ts"
+  },
   "src/shared/types.ts": {}
 };
   const cache = {};
