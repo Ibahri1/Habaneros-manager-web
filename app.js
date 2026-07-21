@@ -17,10 +17,12 @@
       const settings_1 = require("./modules/settings/settings");
       const dom_1 = require("./shared/dom");
       const ids_1 = require("./shared/ids");
-      const login_1 = require("./modules/auth/login");
+      const supabaseAuth_1 = require("./modules/auth/supabaseAuth");
       let state = (0, defaults_1.defaultAppState)();
       let settings = (0, defaults_1.defaultSettings)();
       let cloudConfig = { supabaseUrl: "", anonKey: "" };
+      let authSession = null;
+      let activeWorkspace = null;
       let submissions = [];
       let historyEditSourceId = null;
       let workerSearchText = "";
@@ -30,13 +32,21 @@
       let availabilityDraftWorkerId = "";
       let availabilityDraft = {};
       let availabilityDraftDirty = false;
+      let appEventsBound = false;
+      let workspaceHydrated = false;
+      let workspaceSaveChain = Promise.resolve();
       const els = {
           loginScreen: (0, dom_1.byId)("loginScreen"),
           toast: (0, dom_1.byId)("toast"),
           addWorkerSection: (0, dom_1.byId)("addWorkerSection"),
           loginForm: (0, dom_1.byId)("loginForm"),
+          loginSupabaseUrl: (0, dom_1.byId)("loginSupabaseUrl"),
+          loginSupabaseAnonKey: (0, dom_1.byId)("loginSupabaseAnonKey"),
+          loginEmail: (0, dom_1.byId)("loginEmail"),
           loginPassword: (0, dom_1.byId)("loginPassword"),
           loginError: (0, dom_1.byId)("loginError"),
+          createAccountBtn: (0, dom_1.byId)("createAccountBtn"),
+          forgotPasswordBtn: (0, dom_1.byId)("forgotPasswordBtn"),
           saveStatus: (0, dom_1.byId)("saveStatus"),
           dashboardEmployees: (0, dom_1.byId)("dashboardEmployees"),
           dashboardSubmissions: (0, dom_1.byId)("dashboardSubmissions"),
@@ -100,6 +110,11 @@
           checkRemindersBtn: (0, dom_1.byId)("checkRemindersBtn"),
           sendTestSmsBtn: (0, dom_1.byId)("sendTestSmsBtn"),
           reminderStatus: (0, dom_1.byId)("reminderStatus"),
+          accountEmail: (0, dom_1.byId)("accountEmail"),
+          accountWorkspaceName: (0, dom_1.byId)("accountWorkspaceName"),
+          accountSyncStatus: (0, dom_1.byId)("accountSyncStatus"),
+          importLocalAccountBtn: (0, dom_1.byId)("importLocalAccountBtn"),
+          logoutBtn: (0, dom_1.byId)("logoutBtn"),
           cloudConfigForm: (0, dom_1.byId)("cloudConfigForm"),
           supabaseUrl: (0, dom_1.byId)("supabaseUrl"),
           supabaseAnonKey: (0, dom_1.byId)("supabaseAnonKey"),
@@ -125,7 +140,99 @@
           saveHistoryModificationsBtn: (0, dom_1.byId)("saveHistoryModificationsBtn")
       };
       const workerIdentityFields = [els.workerName, els.employeeCode, els.workerPosition];
-      (0, login_1.requireManagerLogin)({ screen: els.loginScreen, form: els.loginForm, password: els.loginPassword, error: els.loginError }, () => void init());
+      void boot();
+      async function boot() {
+          try {
+              cloudConfig = await window.habanerosDesktop.loadCloudConfig();
+          }
+          catch {
+              cloudConfig = { supabaseUrl: "", anonKey: "" };
+          }
+          renderLoginDefaults();
+          bindLoginEvents();
+          await restoreStoredAccountSession();
+          if (authSession && activeWorkspace)
+              void init();
+      }
+      function renderLoginDefaults() {
+          els.loginSupabaseUrl.value = cloudConfig.supabaseUrl;
+          els.loginSupabaseAnonKey.value = cloudConfig.anonKey;
+      }
+      function bindLoginEvents() {
+          els.loginForm.addEventListener("submit", (event) => void handleLogin(event));
+          els.createAccountBtn.addEventListener("click", () => void handleCreateAccount());
+          els.forgotPasswordBtn.addEventListener("click", () => void handleForgotPassword());
+      }
+      async function restoreStoredAccountSession() {
+          const stored = (0, supabaseAuth_1.loadStoredAuthSession)();
+          if (!stored || !readLoginCloudConfig().supabaseUrl || !readLoginCloudConfig().anonKey)
+              return;
+          try {
+              cloudConfig = readLoginCloudConfig();
+              authSession = await (0, supabaseAuth_1.refreshAuthSession)(cloudConfig, stored);
+              (0, supabaseAuth_1.storeAuthSession)(authSession);
+              activeWorkspace = await (0, supabaseAuth_1.getOrCreateDefaultWorkspace)(cloudConfig, authSession);
+          }
+          catch (error) {
+              console.warn("Saved account session could not be restored.", error);
+              (0, supabaseAuth_1.clearAuthSession)();
+              authSession = null;
+              activeWorkspace = null;
+          }
+      }
+      async function handleLogin(event) {
+          event.preventDefault();
+          await authenticateWithAccount("login");
+      }
+      async function handleCreateAccount() {
+          await authenticateWithAccount("create");
+      }
+      async function authenticateWithAccount(mode) {
+          try {
+              setLoginBusy(true);
+              cloudConfig = readLoginCloudConfig();
+              const email = els.loginEmail.value.trim();
+              const password = els.loginPassword.value;
+              if (!email || !password)
+                  throw new Error("Enter your email and password.");
+              authSession = mode === "create" ? await (0, supabaseAuth_1.createAccount)(cloudConfig, email, password) : await (0, supabaseAuth_1.signInWithPassword)(cloudConfig, email, password);
+              (0, supabaseAuth_1.storeAuthSession)(authSession);
+              activeWorkspace = await (0, supabaseAuth_1.getOrCreateDefaultWorkspace)(cloudConfig, authSession);
+              cloudConfig = await window.habanerosDesktop.saveCloudConfig(cloudConfig);
+              els.loginError.textContent = "";
+              await init();
+          }
+          catch (error) {
+              els.loginError.textContent = error instanceof Error ? error.message : "Login failed. Please try again.";
+              (0, supabaseAuth_1.clearAuthSession)();
+              authSession = null;
+              activeWorkspace = null;
+          }
+          finally {
+              setLoginBusy(false);
+          }
+      }
+      async function handleForgotPassword() {
+          try {
+              const config = readLoginCloudConfig();
+              const email = els.loginEmail.value.trim();
+              if (!email)
+                  throw new Error("Enter your email address first.");
+              await (0, supabaseAuth_1.sendPasswordReset)(config, email);
+              els.loginError.textContent = "Password reset email sent if the account exists.";
+          }
+          catch (error) {
+              els.loginError.textContent = error instanceof Error ? error.message : "Password reset could not be started.";
+          }
+      }
+      function readLoginCloudConfig() {
+          return { supabaseUrl: els.loginSupabaseUrl.value.trim().replace(/\/$/, ""), anonKey: els.loginSupabaseAnonKey.value.trim() };
+      }
+      function setLoginBusy(isBusy) {
+          els.loginForm.querySelectorAll("input, button").forEach((control) => { control.disabled = isBusy; });
+          if (isBusy)
+              els.loginError.textContent = "Signing in...";
+      }
       async function init() {
           try {
               state = await window.habanerosDesktop.loadState();
@@ -137,13 +244,17 @@
               state = (0, defaults_1.defaultAppState)();
           }
           normalizeLoadedData();
+          await hydrateWorkspaceData();
           renderCloudConfig();
+          renderAccountSettings();
           renderAvailabilityInputs();
           renderStaffingInputs();
           bindEvents();
           updateAddWorkerHourFields();
           resetWorkerTimeInputs();
           showSection("dashboard");
+          document.body.classList.remove("login-locked");
+          els.loginScreen.hidden = true;
           render();
       }
       function normalizeLoadedData() {
@@ -157,7 +268,108 @@
           els.darkModeToggle.checked = settings.darkMode;
           renderDeadlineSettings();
       }
+      async function hydrateWorkspaceData() {
+          if (workspaceHydrated || !authSession || !activeWorkspace)
+              return;
+          workspaceHydrated = true;
+          try {
+              setAccountSyncStatus("Loading account data", "warn");
+              const snapshot = await (0, supabaseAuth_1.loadWorkspaceSnapshot)(cloudConfig, authSession, activeWorkspace);
+              if (snapshot?.state) {
+                  const localHasData = hasMeaningfulSchedulerData(state);
+                  if (localHasData) {
+                      const loadCloud = await confirmDialog("This account already has saved scheduler data. Load account data on this device? Choose No to keep this device's local data and upload it into the account.", "Load account data", "Keep local data");
+                      if (loadCloud) {
+                          state = snapshot.state;
+                          settings = (0, availabilityDeadline_1.normalizeSettings)(snapshot.settings || settings);
+                          await persistWorkspaceSnapshotLocally();
+                      }
+                      else {
+                          await saveAuthenticatedWorkspaceSnapshot();
+                      }
+                  }
+                  else {
+                      state = snapshot.state;
+                      settings = (0, availabilityDeadline_1.normalizeSettings)(snapshot.settings || settings);
+                      await persistWorkspaceSnapshotLocally();
+                  }
+                  setAccountSyncStatus("Account data loaded", "good");
+                  return;
+              }
+              if (hasMeaningfulSchedulerData(state)) {
+                  const importLocal = await confirmDialog("Import existing local scheduler data into this account?", "Import local data", "Start blank");
+                  if (importLocal) {
+                      await saveAuthenticatedWorkspaceSnapshot();
+                      setAccountSyncStatus("Local data imported", "good");
+                  }
+                  else {
+                      state = (0, defaults_1.defaultAppState)();
+                      settings = (0, defaults_1.defaultSettings)();
+                      normalizeLoadedData();
+                      await persistWorkspaceSnapshotLocally();
+                      await saveAuthenticatedWorkspaceSnapshot();
+                      setAccountSyncStatus("Blank account started", "good");
+                  }
+              }
+              else {
+                  await saveAuthenticatedWorkspaceSnapshot();
+                  setAccountSyncStatus("Account ready", "good");
+              }
+          }
+          catch (error) {
+              setAccountSyncStatus("Account sync warning", "warn");
+              console.warn("Workspace data could not be loaded. Local data remains available.", error);
+          }
+      }
+      async function persistWorkspaceSnapshotLocally() {
+          state = await window.habanerosDesktop.saveState(state);
+          settings = await window.habanerosDesktop.saveSettings(settings);
+          normalizeLoadedData();
+      }
+      function hasMeaningfulSchedulerData(value) {
+          return value.workers.length > 0 || Boolean(value.schedule) || value.scheduleHistory.length > 0;
+      }
+      function renderAccountSettings() {
+          els.accountEmail.value = authSession?.user.email || "Not signed in";
+          els.accountWorkspaceName.value = activeWorkspace?.name || "No workspace";
+          if (authSession && activeWorkspace && els.accountSyncStatus.textContent === "Signed in")
+              setAccountSyncStatus("Signed in", "good");
+      }
+      function setAccountSyncStatus(message, level = "good") {
+          els.accountSyncStatus.textContent = message;
+          els.accountSyncStatus.className = "count-pill status-" + level;
+      }
+      async function importLocalDataIntoAccount() {
+          if (!authSession || !activeWorkspace) {
+              await showDialogMessage("Log in before importing local data into an account.");
+              return;
+          }
+          if (!await confirmDialog("Import this device's current local scheduler data into the signed-in account? This will replace the account snapshot with this local copy.", "Import local data", "Cancel"))
+              return;
+          try {
+              await saveAuthenticatedWorkspaceSnapshot();
+              setAccountSyncStatus("Local data imported", "good");
+              await showDialogMessage("Local scheduler data imported into this account.");
+          }
+          catch (error) {
+              setAccountSyncStatus("Import failed", "bad");
+              showError("Local data could not be imported into this account.", error);
+          }
+      }
+      async function logoutAccount() {
+          if (!authSession)
+              return;
+          if (!await confirmDialog("Log out of this account? Local cached data will remain on this device.", "Log Out", "Cancel"))
+              return;
+          await (0, supabaseAuth_1.signOut)(cloudConfig, authSession);
+          authSession = null;
+          activeWorkspace = null;
+          window.location.reload();
+      }
       function bindEvents() {
+          if (appEventsBound)
+              return;
+          appEventsBound = true;
           els.workerForm.addEventListener("submit", (event) => void addWorker(event));
           els.workerForm.addEventListener("reset", () => queueMicrotask(cleanupAfterDialog));
           els.closeAddWorkerBtn.addEventListener("click", closeAddWorkerModal);
@@ -180,6 +392,8 @@
           els.scheduleRulesDetails.addEventListener("toggle", updateScheduleRulesToggleLabel);
           els.checkRemindersBtn.addEventListener("click", () => void checkReminderStatus());
           els.sendTestSmsBtn.addEventListener("click", () => void sendTestSms());
+          els.importLocalAccountBtn.addEventListener("click", () => void importLocalDataIntoAccount());
+          els.logoutBtn.addEventListener("click", () => void logoutAccount());
           els.cloudConfigForm.addEventListener("submit", (event) => void saveCloudConfig(event));
           els.testCloudBtn.addEventListener("click", () => void testCloudConfig());
           els.syncEmployeesBtn.addEventListener("click", () => void syncCloudEmployees());
@@ -248,6 +462,7 @@
           renderScheduleHistory();
           renderDashboard();
           renderNeedsAttention();
+          renderAccountSettings();
           ensureWorkerFormInteractive();
       }
       function renderDashboard() {
@@ -1389,6 +1604,10 @@
           }
       }
       async function saveManagerCloudSnapshot() {
+          if (authSession && activeWorkspace) {
+              await saveAuthenticatedWorkspaceSnapshot();
+              return;
+          }
           const config = readCloudConfigForm();
           if (!config.supabaseUrl || !config.anonKey)
               return;
@@ -1400,6 +1619,25 @@
               if (!response.ok)
                   throw new Error((await response.text()) || "Cloud settings snapshot could not be saved.");
           });
+      }
+      function queueAuthenticatedWorkspaceSnapshot() {
+          if (!authSession || !activeWorkspace || !cloudConfig.supabaseUrl || !cloudConfig.anonKey)
+              return;
+          setAccountSyncStatus("Saving account data", "warn");
+          workspaceSaveChain = workspaceSaveChain
+              .then(() => saveAuthenticatedWorkspaceSnapshot())
+              .catch((error) => {
+              setAccountSyncStatus("Account save failed", "bad");
+              console.warn("Authenticated workspace snapshot could not be saved.", error);
+          });
+      }
+      async function saveAuthenticatedWorkspaceSnapshot() {
+          if (!authSession || !activeWorkspace)
+              return;
+          authSession = await (0, supabaseAuth_1.refreshAuthSession)(cloudConfig, authSession);
+          (0, supabaseAuth_1.storeAuthSession)(authSession);
+          await (0, supabaseAuth_1.saveWorkspaceSnapshot)(cloudConfig, authSession, activeWorkspace, { state, settings, cloudConfig });
+          setAccountSyncStatus("Account saved", "good");
       }
       function renderReminderFunctionResult(result) {
           const errors = Array.isArray(result.errors) ? result.errors.length : 0;
@@ -1417,7 +1655,8 @@
           try {
               settings = { ...settings, darkMode: els.darkModeToggle.checked };
               (0, settings_1.applyTheme)(settings);
-              await window.habanerosDesktop.saveSettings(settings);
+              settings = await window.habanerosDesktop.saveSettings(settings);
+              queueAuthenticatedWorkspaceSnapshot();
           }
           catch (error) {
               showError("Theme preference could not be saved.", error);
@@ -1433,6 +1672,7 @@
               state = await window.habanerosDesktop.saveState(state);
               await window.habanerosDesktop.setDirty(false);
               setSaveStatus("Saved", "good");
+              queueAuthenticatedWorkspaceSnapshot();
           }
           finally {
               ensureWorkerFormInteractive();
@@ -1490,6 +1730,7 @@
       const STATE_KEY = "habaneros-web-state";
       const SETTINGS_KEY = "habaneros-web-settings";
       const CLOUD_KEY = "habaneros-web-cloud-config";
+      const AUTH_SESSION_KEY = "habaneros-auth-session";
       const MANAGER_STATE_ID = "habaneros-manager";
       let cloudLoaded = false;
       let saveChain = Promise.resolve();
@@ -1538,6 +1779,8 @@
       }
       async function loadManagerState() {
           const localState = readStorage(STATE_KEY, (0, defaults_1.defaultAppState)());
+          if (hasAuthSession())
+              return localState;
           const config = readStorage(CLOUD_KEY, { supabaseUrl: "", anonKey: "" });
           if (!hasCloudConfig(config)) {
               setCloudStatus("Cloud save not configured");
@@ -1568,6 +1811,8 @@
       async function saveManagerCloudConfig(config) {
           const cleanConfig = { supabaseUrl: config.supabaseUrl.trim().replace(/\/$/, ""), anonKey: config.anonKey.trim() };
           writeStorage(CLOUD_KEY, cleanConfig);
+          if (hasAuthSession())
+              return structuredClone(cleanConfig);
           if (!hasCloudConfig(cleanConfig)) {
               setCloudStatus("Cloud save not configured");
               return structuredClone(cleanConfig);
@@ -1592,6 +1837,8 @@
           return structuredClone(cleanConfig);
       }
       function queueManagerCloudSave() {
+          if (hasAuthSession())
+              return;
           const config = readStorage(CLOUD_KEY, { supabaseUrl: "", anonKey: "" });
           if (!hasCloudConfig(config)) {
               setCloudStatus("Cloud save not configured");
@@ -1636,6 +1883,9 @@
       }
       function hasCloudConfig(config) {
           return Boolean(config.supabaseUrl && config.anonKey);
+      }
+      function hasAuthSession() {
+          return Boolean(localStorage.getItem(AUTH_SESSION_KEY));
       }
       function hasMeaningfulState(state) {
           return state.workers.length > 0 || Boolean(state.schedule) || state.scheduleHistory.length > 0;
@@ -1737,37 +1987,133 @@
           return rows.map((row) => row.map((value) => '"' + String(value).replaceAll('"', '""') + '"').join(",")).join("\n");
       }
     },
-    "src/renderer/modules/auth/login.ts": function(require, exports) {
+    "src/renderer/modules/auth/supabaseAuth.ts": function(require, exports) {
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
-      exports.requireManagerLogin = requireManagerLogin;
-      const SESSION_KEY = "habaneros-manager-authenticated";
-      const MANAGER_PASSWORD = "92118";
-      function requireManagerLogin(elements, onAuthenticated) {
-          const unlock = () => {
-              document.body.classList.remove("login-locked");
-              elements.screen.hidden = true;
-              onAuthenticated();
-          };
-          if (sessionStorage.getItem(SESSION_KEY) === "true") {
-              unlock();
-              return;
+      exports.loadStoredAuthSession = loadStoredAuthSession;
+      exports.storeAuthSession = storeAuthSession;
+      exports.clearAuthSession = clearAuthSession;
+      exports.hasStoredAuthSession = hasStoredAuthSession;
+      exports.signInWithPassword = signInWithPassword;
+      exports.createAccount = createAccount;
+      exports.sendPasswordReset = sendPasswordReset;
+      exports.refreshAuthSession = refreshAuthSession;
+      exports.signOut = signOut;
+      exports.getOrCreateDefaultWorkspace = getOrCreateDefaultWorkspace;
+      exports.loadWorkspaceSnapshot = loadWorkspaceSnapshot;
+      exports.saveWorkspaceSnapshot = saveWorkspaceSnapshot;
+      const AUTH_SESSION_KEY = "habaneros-auth-session";
+      function loadStoredAuthSession() {
+          const value = localStorage.getItem(AUTH_SESSION_KEY);
+          if (!value)
+              return null;
+          try {
+              const parsed = JSON.parse(value);
+              return parsed.accessToken && parsed.refreshToken && parsed.user?.email ? parsed : null;
           }
-          document.body.classList.add("login-locked");
-          elements.screen.hidden = false;
-          elements.form.addEventListener("submit", (event) => {
-              event.preventDefault();
-              if (elements.password.value !== MANAGER_PASSWORD) {
-                  elements.error.textContent = "Incorrect password. Please try again.";
-                  elements.password.select();
-                  return;
+          catch {
+              return null;
+          }
+      }
+      function storeAuthSession(session) {
+          localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+      }
+      function clearAuthSession() {
+          localStorage.removeItem(AUTH_SESSION_KEY);
+      }
+      function hasStoredAuthSession() {
+          return Boolean(loadStoredAuthSession());
+      }
+      async function signInWithPassword(config, email, password) {
+          const response = await authFetch(config, "/auth/v1/token?grant_type=password", { email, password });
+          return sessionFromResponse(response);
+      }
+      async function createAccount(config, email, password) {
+          const response = await authFetch(config, "/auth/v1/signup", { email, password });
+          return sessionFromResponse(response);
+      }
+      async function sendPasswordReset(config, email) {
+          await authFetch(config, "/auth/v1/recover", { email });
+      }
+      async function refreshAuthSession(config, session) {
+          if (Date.now() < session.expiresAt - 60_000)
+              return session;
+          const response = await authFetch(config, "/auth/v1/token?grant_type=refresh_token", { refresh_token: session.refreshToken });
+          return sessionFromResponse(response);
+      }
+      async function signOut(config, session) {
+          await fetch(cleanUrl(config) + "/auth/v1/logout", {
+              method: "POST",
+              headers: {
+                  apikey: config.anonKey,
+                  Authorization: "Bearer " + session.accessToken
               }
-              sessionStorage.setItem(SESSION_KEY, "true");
-              elements.error.textContent = "";
-              elements.password.value = "";
-              unlock();
+          }).catch(() => undefined);
+          clearAuthSession();
+      }
+      async function getOrCreateDefaultWorkspace(config, session) {
+          const rows = await rpc(config, session, "auth_get_or_create_default_workspace", { p_name: "Habaneros" });
+          const row = rows[0];
+          if (!row)
+              throw new Error("No workspace was returned for this account.");
+          return { id: row.workspace_id, name: row.name, slug: row.slug, role: row.role };
+      }
+      async function loadWorkspaceSnapshot(config, session, workspace) {
+          const rows = await rpc(config, session, "auth_load_workspace_app_state", { p_workspace_id: workspace.id });
+          return rows[0]?.state_data || null;
+      }
+      async function saveWorkspaceSnapshot(config, session, workspace, snapshot) {
+          await rpc(config, session, "auth_save_workspace_app_state", { p_workspace_id: workspace.id, p_state_data: snapshot });
+      }
+      async function authFetch(config, path, body) {
+          if (!config.supabaseUrl || !config.anonKey)
+              throw new Error("Supabase URL and public anon key are required.");
+          const response = await fetch(cleanUrl(config) + path, {
+              method: "POST",
+              headers: {
+                  apikey: config.anonKey,
+                  Authorization: "Bearer " + config.anonKey,
+                  "Content-Type": "application/json"
+              },
+              body: JSON.stringify(body)
           });
-          queueMicrotask(() => elements.password.focus());
+          return parseResponse(response);
+      }
+      async function rpc(config, session, functionName, body) {
+          if (!config.supabaseUrl || !config.anonKey)
+              throw new Error("Supabase URL and public anon key are required.");
+          const response = await fetch(cleanUrl(config) + "/rest/v1/rpc/" + functionName, {
+              method: "POST",
+              headers: {
+                  apikey: config.anonKey,
+                  Authorization: "Bearer " + session.accessToken,
+                  "Content-Type": "application/json"
+              },
+              body: JSON.stringify(body)
+          });
+          return parseResponse(response);
+      }
+      async function parseResponse(response) {
+          const text = await response.text();
+          const parsed = text ? JSON.parse(text) : {};
+          if (!response.ok) {
+              throw new Error(parsed.error_description || parsed.msg || parsed.message || "Supabase request failed.");
+          }
+          return parsed;
+      }
+      function sessionFromResponse(response) {
+          if (!response.access_token || !response.refresh_token || !response.user?.id || !response.user.email) {
+              throw new Error(response.message || "Supabase did not return a complete login session.");
+          }
+          return {
+              accessToken: response.access_token,
+              refreshToken: response.refresh_token,
+              expiresAt: response.expires_at ? response.expires_at * 1000 : Date.now() + Math.max(1, response.expires_in || 3600) * 1000,
+              user: { id: response.user.id, email: response.user.email }
+          };
+      }
+      function cleanUrl(config) {
+          return config.supabaseUrl.trim().replace(/\/$/, "");
       }
     },
     "src/renderer/modules/availability/availability.ts": function(require, exports) {
@@ -2366,14 +2712,16 @@
     "./modules/settings/settings": "src/renderer/modules/settings/settings.ts",
     "./shared/dom": "src/renderer/shared/dom.ts",
     "./shared/ids": "src/renderer/shared/ids.ts",
-    "./modules/auth/login": "src/renderer/modules/auth/login.ts"
+    "./modules/auth/supabaseAuth": "src/renderer/modules/auth/supabaseAuth.ts"
   },
   "src/renderer/browserBridge.ts": {
     "../shared/defaults": "src/shared/defaults.ts",
     "../shared/types": "src/shared/types.ts",
     "../shared/availabilityDeadline": "src/shared/availabilityDeadline.ts"
   },
-  "src/renderer/modules/auth/login.ts": {},
+  "src/renderer/modules/auth/supabaseAuth.ts": {
+    "../../../shared/types": "src/shared/types.ts"
+  },
   "src/renderer/modules/availability/availability.ts": {
     "../../../shared/types": "src/shared/types.ts"
   },
