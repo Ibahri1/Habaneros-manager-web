@@ -36,6 +36,7 @@
       let appEventsBound = false;
       let workspaceHydrated = false;
       let workspaceSaveChain = Promise.resolve();
+      let activityLogFilterValue = "all";
       const els = {
           loginScreen: (0, dom_1.byId)("loginScreen"),
           toast: (0, dom_1.byId)("toast"),
@@ -109,6 +110,8 @@
           secondReminderTime: (0, dom_1.byId)("secondReminderTime"),
           firstReminderMessage: (0, dom_1.byId)("firstReminderMessage"),
           secondReminderMessage: (0, dom_1.byId)("secondReminderMessage"),
+          schedulePostedMessage: (0, dom_1.byId)("schedulePostedMessage"),
+          employeeScheduleUrl: (0, dom_1.byId)("employeeScheduleUrl"),
           deadlinePreview: (0, dom_1.byId)("deadlinePreview"),
           testSmsPhone: (0, dom_1.byId)("testSmsPhone"),
           checkRemindersBtn: (0, dom_1.byId)("checkRemindersBtn"),
@@ -148,7 +151,11 @@
           clearAllPublishedSchedulesBtn: (0, dom_1.byId)("clearAllPublishedSchedulesBtn"),
           clearLastWeekBtn: (0, dom_1.byId)("clearLastWeekBtn"),
           clearCurrentWeekBtn: (0, dom_1.byId)("clearCurrentWeekBtn"),
-          clearNextWeekBtn: (0, dom_1.byId)("clearNextWeekBtn")
+          clearNextWeekBtn: (0, dom_1.byId)("clearNextWeekBtn"),
+          activityLogCount: (0, dom_1.byId)("activityLogCount"),
+          activityLogList: (0, dom_1.byId)("activityLogList"),
+          activityLogFilter: (0, dom_1.byId)("activityLogFilter"),
+          clearActivityLogBtn: (0, dom_1.byId)("clearActivityLogBtn")
       };
       const workerIdentityFields = [els.workerName, els.employeeCode, els.workerPosition];
       const ADMIN_ACTION_PASSWORD = "92118";
@@ -276,6 +283,7 @@
               state.rules.weekStart = (0, time_1.nextMonday)();
           else
               state.rules.weekStart = (0, time_1.mondayWeekStart)(state.rules.weekStart);
+          state.activityLog = state.activityLog || [];
           state.workers = state.workers.map((worker) => (0, defaults_1.normalizeWorker)(worker, state.rules));
           settings = (0, availabilityDeadline_1.normalizeSettings)(settings);
           (0, scheduleEditor_1.normalizeSchedule)(state.schedule, state.rules.mealBreakHours);
@@ -407,7 +415,8 @@
           els.clearBtn.addEventListener("click", () => void clearData());
           els.darkModeToggle.addEventListener("change", () => void updateTheme());
           els.deadlineSettingsForm.addEventListener("submit", (event) => void saveDeadlineSettings(event));
-          [els.smsRemindersEnabled, els.deadlineDay, els.deadlineTime, els.firstReminderTime, els.secondReminderTime, els.firstReminderMessage, els.secondReminderMessage].forEach((input) => input.addEventListener("input", updateDeadlinePreview));
+          [els.smsRemindersEnabled, els.deadlineDay, els.deadlineTime, els.firstReminderTime, els.secondReminderTime, els.firstReminderMessage, els.secondReminderMessage, els.schedulePostedMessage, els.employeeScheduleUrl].forEach((input) => input.addEventListener("input", updateDeadlinePreview));
+          els.smsRemindersEnabled.addEventListener("change", () => void handleSmsReminderToggle());
           els.scheduleRulesDetails.addEventListener("toggle", updateScheduleRulesToggleLabel);
           els.checkRemindersBtn.addEventListener("click", () => void checkReminderStatus());
           els.sendTestSmsBtn.addEventListener("click", () => void sendTestSms());
@@ -426,6 +435,8 @@
           els.clearLastWeekBtn.addEventListener("click", () => void clearRelativePublishedSchedule(-7));
           els.clearCurrentWeekBtn.addEventListener("click", () => void clearRelativePublishedSchedule(0));
           els.clearNextWeekBtn.addEventListener("click", () => void clearRelativePublishedSchedule(7));
+          els.activityLogFilter.addEventListener("change", () => { activityLogFilterValue = els.activityLogFilter.value; renderActivityLog(); });
+          els.clearActivityLogBtn.addEventListener("click", () => void clearActivityLog());
           [els.historyEmployeeFilter, els.historyWeekFilter, els.historyStatusFilter].forEach((filter) => filter.addEventListener("change", renderHistory));
           [els.weekStart, els.openShift, els.closeShift, els.shiftHours, els.mealBreakHours].forEach((input) => input.addEventListener("change", () => void rulesChanged()));
           els.workerSearch.addEventListener("input", () => { workerSearchText = els.workerSearch.value.trim().toLowerCase(); renderWorkers(); });
@@ -485,6 +496,7 @@
           renderSchedule();
           renderScheduleHistory();
           renderPublishedSchedules();
+          renderActivityLog();
           renderDashboard();
           renderNeedsAttention();
           renderAccountSettings();
@@ -499,6 +511,39 @@
           els.dashboardHistory.textContent = state.scheduleHistory.length + " saved";
           els.dashboardSettings.textContent = settings.availabilityDeadline.smsRemindersEnabled ? "Deadline: " + (0, availabilityDeadline_1.formatDeadlineSummary)(settings) : "SMS reminders disabled";
           els.dashboardPrintStatus.textContent = state.schedule ? "Ready to print" : "No schedule yet";
+      }
+      function addActivityLog(input) {
+          try {
+              const entry = { id: (0, ids_1.createId)(), timestamp: new Date().toISOString(), userId: authSession?.user.id, ...input };
+              state.activityLog = [entry, ...(state.activityLog || [])].slice(0, 1000);
+              void saveState().then(renderActivityLog).catch((error) => console.warn("Activity log could not be saved.", error));
+          }
+          catch (error) {
+              console.warn("Activity log could not be recorded.", error);
+          }
+      }
+      function renderActivityLog() {
+          const entries = (state.activityLog || []).filter((entry) => activityLogFilterValue === "all" || entry.category === activityLogFilterValue);
+          els.activityLogCount.textContent = (state.activityLog || []).length + " entr" + ((state.activityLog || []).length === 1 ? "y" : "ies");
+          els.clearActivityLogBtn.disabled = !(state.activityLog || []).length;
+          els.activityLogFilter.value = activityLogFilterValue;
+          if (!entries.length) {
+              els.activityLogList.innerHTML = '<div class="empty-state">No activity log entries match this filter.</div>';
+              return;
+          }
+          els.activityLogList.innerHTML = entries.map((entry) => '<article class="history-row activity-log-row"><div><strong>' + (0, dom_1.escapeHtml)(activityLabel(entry.category)) + '</strong><div class="meta">' + (0, dom_1.escapeHtml)(formatSubmittedAt(entry.timestamp)) + '</div></div><div class="history-details"><span>' + (0, dom_1.escapeHtml)(entry.message) + '</span>' + (entry.weekStart ? '<span>Week: ' + (0, dom_1.escapeHtml)(formatWeek(entry.weekStart)) + '</span>' : '') + (entry.employeeName ? '<span>Employee: ' + (0, dom_1.escapeHtml)(entry.employeeName) + '</span>' : '') + '</div></article>').join("");
+      }
+      function activityLabel(category) {
+          return category === "schedule" ? "Schedule" : category === "text" ? "Text" : category === "availability" ? "Availability" : category === "settings" ? "Settings" : "Account";
+      }
+      async function clearActivityLog() {
+          if (!await requireAdminActionPassword("Clear Activity Log", "activity_log_clear_password_failed"))
+              return;
+          if (!await confirmDialog("Are you sure you want to clear the activity log?"))
+              return;
+          state.activityLog = [];
+          await saveStateAndRender();
+          showToast("Activity log cleared.", "good", 7000);
       }
       function renderScheduleRulesSummary() {
           const staffingTotal = types_1.DAYS.reduce((total, day) => total + state.rules.staffing[day].open + state.rules.staffing[day].close, 0);
@@ -1199,14 +1244,20 @@
               await showDialogMessage("Generate a schedule before pushing it to the employee website.");
               return;
           }
-          if (!await requireAdminActionPassword("Push to Employee Domain"))
-              return;
           try {
               const { session, workspace } = await requirePublishedScheduleAccount();
               const weekStart = (0, time_1.mondayWeekStart)(state.rules.weekStart);
+              const existingSchedules = await (0, supabaseAuth_1.listPublishedSchedules)(cloudConfig, session, workspace.id).catch(() => publishedSchedules);
+              const isRepush = existingSchedules.some((entry) => entry.weekStart === weekStart);
+              if (isRepush && !await confirmDialog("A schedule is already published for this week. Repushing will replace the schedule currently visible to employees. Continue?", "Continue", "Cancel"))
+                  return;
+              if (!await requireAdminActionPassword("Push to Employee Domain"))
+                  return;
               await (0, supabaseAuth_1.publishScheduleToEmployeeDomain)(cloudConfig, session, workspace.id, weekStart, normalizedScheduleSnapshot(state.schedule, weekStart));
               await refreshPublishedSchedules(false);
               showToast("Schedule pushed to employee website.", "good", 9000);
+              addActivityLog({ category: "schedule", actionType: isRepush ? "schedule_repushed" : "schedule_pushed", message: isRepush ? "Schedule repushed/replaced on employee domain." : "Schedule pushed to employee domain.", weekStart });
+              await askSendSchedulePostedText(weekStart);
           }
           catch (error) {
               showError("Schedule could not be pushed to the employee website.", error);
@@ -1227,6 +1278,88 @@
               if (showSuccess)
                   showError("Published schedules could not be loaded.", error);
           }
+      }
+      async function askSendSchedulePostedText(weekStart) {
+          const send = await confirmDialog("Schedule pushed to employee website. Would you like to send a text message to employees?", "Send Text", "Skip");
+          if (!send) {
+              addActivityLog({ category: "text", actionType: "schedule_posted_text_skipped", message: "Schedule posted text skipped.", weekStart });
+              return;
+          }
+          openSchedulePostedTextModal(weekStart);
+      }
+      function openSchedulePostedTextModal(weekStart) {
+          const eligible = state.workers.filter((worker) => worker.active && worker.mobilePhone.trim());
+          const withoutPhones = state.workers.filter((worker) => worker.active && !worker.mobilePhone.trim()).length;
+          const overlay = document.createElement("section");
+          overlay.className = "modal-shell";
+          overlay.dataset.schedulePostedTextOverlay = "true";
+          overlay.innerHTML = `
+          <div class="modal-panel schedule-posted-text-modal" role="dialog" aria-modal="true" aria-labelledby="schedule-posted-text-title">
+            <div class="section-head with-action">
+              <div>
+                <h2 id="schedule-posted-text-title">Send Schedule Posted Text</h2>
+                <p>Review the text and choose which employees should receive it.</p>
+              </div>
+              <button class="secondary" data-schedule-text-cancel type="button">Skip</button>
+            </div>
+            <form data-schedule-text-form class="preferred-settings-form">
+              <label>Text Message <textarea data-schedule-text-message rows="4" maxlength="500" required>${(0, dom_1.escapeHtml)(renderSchedulePostedMessage(weekStart))}</textarea></label>
+              <div class="deadline-preview">${withoutPhones ? (0, dom_1.escapeHtml)(withoutPhones + " active employee" + (withoutPhones === 1 ? "" : "s") + " without phone numbers cannot receive texts.") : "All active employees have phone numbers."}</div>
+              <fieldset><legend>Recipients</legend><div class="schedule-text-recipient-list">
+                ${eligible.length ? eligible.map((worker) => '<label class="check-row schedule-text-recipient"><input data-schedule-text-worker="' + worker.id + '" type="checkbox" checked><span><strong>' + (0, dom_1.escapeHtml)(worker.name) + '</strong><em>' + (0, dom_1.escapeHtml)(worker.mobilePhone) + '</em></span></label>').join("") : '<div class="empty-state">No active employees have phone numbers.</div>'}
+              </div></fieldset>
+              <div class="actions-row preferred-settings-actions">
+                <button class="primary" type="submit" ${eligible.length ? "" : "disabled"}>Send Text</button>
+                <button class="secondary" data-schedule-text-cancel type="button">Skip</button>
+              </div>
+            </form>
+          </div>`;
+          const close = () => {
+              overlay.remove();
+              cleanupAfterDialog();
+          };
+          overlay.querySelectorAll("[data-schedule-text-cancel]").forEach((button) => button.addEventListener("click", () => {
+              addActivityLog({ category: "text", actionType: "schedule_posted_text_skipped", message: "Schedule posted text skipped.", weekStart });
+              close();
+          }));
+          overlay.addEventListener("click", (event) => { if (event.target === overlay)
+              close(); });
+          overlay.querySelector("[data-schedule-text-form]")?.addEventListener("submit", (event) => void sendSchedulePostedText(event, overlay, weekStart, close));
+          document.body.appendChild(overlay);
+          window.setTimeout(() => overlay.querySelector("[data-schedule-text-message]")?.focus(), 0);
+      }
+      async function sendSchedulePostedText(event, overlay, weekStart, close) {
+          event.preventDefault();
+          const message = overlay.querySelector("[data-schedule-text-message]")?.value.trim() || "";
+          const selectedIds = new Set(Array.from(overlay.querySelectorAll("[data-schedule-text-worker]:checked")).map((input) => input.dataset.scheduleTextWorker || ""));
+          const recipients = state.workers.filter((worker) => selectedIds.has(worker.id) && worker.mobilePhone.trim()).map((worker) => ({ id: worker.id, name: worker.name, phone: worker.mobilePhone.trim() }));
+          if (!message) {
+              showToast("Enter a schedule posted text message.", "bad", 7000);
+              return;
+          }
+          if (!recipients.length) {
+              showToast("Select at least one employee with a phone number.", "bad", 7000);
+              return;
+          }
+          try {
+              const result = await invokeReminderFunction("schedulePosted", "", { weekStart, message, recipients });
+              const sent = Number(result.messagesSent || 0);
+              const failed = Array.isArray(result.errors) ? result.errors.length : Number(result.messagesFailed || 0);
+              close();
+              showToast(failed ? "Schedule text sent to " + sent + " employees. Failed for " + failed + " employees." : "Schedule text sent to " + sent + " employees.", failed ? "warn" : "good", 10000);
+              addActivityLog({ category: "text", actionType: "schedule_posted_text_sent", message: failed ? "Schedule posted text sent to " + sent + " employees. Failed for " + failed + " employees." : "Schedule posted text sent to " + sent + " employees.", weekStart, metadata: { selected: recipients.length, sent, failed, excluded: state.workers.filter((worker) => worker.active && worker.mobilePhone.trim()).length - recipients.length } });
+          }
+          catch (error) {
+              showError("Schedule posted text could not be sent.", error);
+              addActivityLog({ category: "text", actionType: "schedule_posted_text_failed", message: "Schedule posted text failed.", weekStart, metadata: { error: error instanceof Error ? error.message : String(error) } });
+          }
+      }
+      function renderSchedulePostedMessage(weekStart) {
+          const link = settings.availabilityDeadline.employeeScheduleUrl || "";
+          return settings.availabilityDeadline.schedulePostedMessage
+              .replaceAll("[employee schedule link]", link)
+              .replaceAll("{employeeScheduleLink}", link)
+              .replaceAll("{weekOf}", formatWeek(weekStart));
       }
       function renderPublishedSchedules(message = "") {
           els.publishedScheduleCount.textContent = publishedSchedules.length + " published";
@@ -1259,6 +1392,7 @@
               publishedSchedules = publishedSchedules.filter((entry) => entry.weekStart !== weekStart);
               renderPublishedSchedules();
               showToast("Schedule removed from employee website.", "good", 9000);
+              addActivityLog({ category: "schedule", actionType: "published_schedule_cleared", message: "Schedule cleared from employee domain.", weekStart });
           }
           catch (error) {
               showError("Schedule could not be removed from the employee website.", error);
@@ -1273,16 +1407,18 @@
               return;
           try {
               const { session, workspace } = await requirePublishedScheduleAccount();
+              const clearedCount = publishedSchedules.length;
               await (0, supabaseAuth_1.clearAllPublishedSchedules)(cloudConfig, session, workspace.id);
               publishedSchedules = [];
               renderPublishedSchedules();
               showToast("Schedule removed from employee website.", "good", 9000);
+              addActivityLog({ category: "schedule", actionType: "all_published_schedules_cleared", message: "All published schedules cleared from employee domain.", metadata: { count: clearedCount } });
           }
           catch (error) {
               showError("Published schedules could not be removed from the employee website.", error);
           }
       }
-      async function requireAdminActionPassword(actionLabel) {
+      async function requireAdminActionPassword(actionLabel, failedActionType = "") {
           return new Promise((resolve) => {
               let settled = false;
               const overlay = document.createElement("section");
@@ -1314,8 +1450,11 @@
                   document.removeEventListener("keydown", handleKeydown);
                   overlay.remove();
                   cleanupAfterDialog();
-                  if (showIncorrect)
+                  if (showIncorrect) {
                       showToast("Incorrect password. Action canceled.", "bad", 7000);
+                      if (failedActionType)
+                          addActivityLog({ category: "settings", actionType: failedActionType, message: "Incorrect password. Action canceled.", metadata: { actionLabel } });
+                  }
                   resolve(allowed);
               };
               const handleKeydown = (event) => {
@@ -1503,6 +1642,7 @@
       async function saveCloudConfig(event) {
           event.preventDefault();
           try {
+              const previous = { ...cloudConfig };
               cloudConfig = await window.habanerosDesktop.saveCloudConfig(readCloudConfigForm());
               state = await window.habanerosDesktop.loadState();
               settings = await window.habanerosDesktop.loadSettings();
@@ -1510,6 +1650,8 @@
               renderCloudConfig();
               renderStaffingInputs();
               render();
+              if (previous.supabaseUrl !== cloudConfig.supabaseUrl || previous.anonKey !== cloudConfig.anonKey)
+                  addActivityLog({ category: "settings", actionType: "supabase_configuration_changed", message: "Supabase configuration changed.", metadata: { supabaseUrlChanged: previous.supabaseUrl !== cloudConfig.supabaseUrl, anonKeyChanged: previous.anonKey !== cloudConfig.anonKey } });
               await showDialogMessage("Supabase settings saved.");
           }
           catch (error) {
@@ -1546,7 +1688,12 @@
       }
       async function refreshSubmissions() {
           try {
+              const knownSubmissionLogIds = new Set((state.activityLog || []).filter((entry) => entry.actionType === "employee_availability_submitted").map((entry) => String(entry.metadata?.submissionId || "")));
               submissions = await window.habanerosDesktop.listAvailabilitySubmissions(null);
+              submissions.forEach((submission) => {
+                  if (!knownSubmissionLogIds.has(submission.id))
+                      addActivityLog({ category: "availability", actionType: "employee_availability_submitted", message: "Employee availability submitted.", weekStart: submission.weekStart, employeeName: submission.employeeName, employeeId: submission.employeeId, metadata: { submissionId: submission.id, status: submission.status } });
+              });
               renderSubmissions();
               renderHistoryFilters();
               renderHistory();
@@ -1708,6 +1855,9 @@
               return;
           try {
               const preferred = (0, defaults_1.normalizePreferredSettings)(settings.preferredSettings);
+              const wasSmsEnabled = settings.availabilityDeadline.smsRemindersEnabled;
+              if (!settings.availabilityDeadline.smsRemindersEnabled && preferred.availabilityDeadline.smsRemindersEnabled && !await requireAdminActionPassword("Enable SMS Reminders"))
+                  return;
               const nextStaffing = types_1.DAYS.reduce((staffing, day) => {
                   staffing[day] = { ...(state.rules.staffing[day] || { open: 0, close: 0 }) };
                   return staffing;
@@ -1731,6 +1881,11 @@
               renderStaffingInputs();
               render();
               showToast("Preferred settings loaded.", "good", 9000);
+              addActivityLog({ category: "settings", actionType: "preferred_settings_loaded", message: "Preferred settings loaded." });
+              if (!wasSmsEnabled && settings.availabilityDeadline.smsRemindersEnabled)
+                  addActivityLog({ category: "settings", actionType: "sms_reminders_enabled", message: "SMS reminders enabled." });
+              if (wasSmsEnabled && !settings.availabilityDeadline.smsRemindersEnabled)
+                  addActivityLog({ category: "settings", actionType: "sms_reminders_disabled", message: "SMS reminders disabled." });
           }
           catch (error) {
               showError("Preferred settings could not be loaded.", error);
@@ -1771,6 +1926,8 @@
                   <label>Second reminder time <input data-preferred-field="secondReminderTime" type="time" value="${preferred.availabilityDeadline.secondReminderTime}" required></label>
                   <label class="full">Reminder #1 message <textarea data-preferred-field="firstReminderMessage" rows="3" maxlength="500" required>${(0, dom_1.escapeHtml)(preferred.availabilityDeadline.firstReminderMessage)}</textarea></label>
                   <label class="full">Reminder #2 message <textarea data-preferred-field="secondReminderMessage" rows="3" maxlength="500" required>${(0, dom_1.escapeHtml)(preferred.availabilityDeadline.secondReminderMessage)}</textarea></label>
+                  <label class="full">Schedule Posted Text Message <textarea data-preferred-field="schedulePostedMessage" rows="3" maxlength="500" required>${(0, dom_1.escapeHtml)(preferred.availabilityDeadline.schedulePostedMessage)}</textarea></label>
+                  <label class="full">Employee Schedule Link <input data-preferred-field="employeeScheduleUrl" type="url" value="${(0, dom_1.escapeHtml)(preferred.availabilityDeadline.employeeScheduleUrl)}"></label>
                 </div>
               </fieldset>
               <fieldset><legend>Supabase Configuration</legend>
@@ -1805,6 +1962,7 @@
               await saveManagerCloudSnapshot().catch((error) => console.warn("Preferred settings were saved locally, but the cloud snapshot was not updated.", error));
               close();
               showToast("Preferred settings saved.", "good", 9000);
+              addActivityLog({ category: "settings", actionType: "preferred_settings_saved", message: "Preferred settings saved." });
           }
           catch (error) {
               showError("Preferred settings could not be saved.", error);
@@ -1839,7 +1997,9 @@
                   firstReminderTime: value("firstReminderTime"),
                   secondReminderTime: value("secondReminderTime"),
                   firstReminderMessage: value("firstReminderMessage"),
-                  secondReminderMessage: value("secondReminderMessage")
+                  secondReminderMessage: value("secondReminderMessage"),
+                  schedulePostedMessage: value("schedulePostedMessage"),
+                  employeeScheduleUrl: value("employeeScheduleUrl")
               },
               cloudConfig: {
                   supabaseUrl: value("supabaseUrl").replace(/\/$/, ""),
@@ -1856,34 +2016,71 @@
           els.secondReminderTime.value = settings.availabilityDeadline.secondReminderTime;
           els.firstReminderMessage.value = settings.availabilityDeadline.firstReminderMessage;
           els.secondReminderMessage.value = settings.availabilityDeadline.secondReminderMessage;
+          els.schedulePostedMessage.value = settings.availabilityDeadline.schedulePostedMessage;
+          els.employeeScheduleUrl.value = settings.availabilityDeadline.employeeScheduleUrl;
           els.sendTestSmsBtn.disabled = !settings.availabilityDeadline.smsRemindersEnabled;
           updateDeadlinePreview();
       }
       async function saveDeadlineSettings(event) {
           event.preventDefault();
           try {
-              settings = (0, availabilityDeadline_1.normalizeSettings)({
-                  ...settings,
-                  availabilityDeadline: {
-                      smsRemindersEnabled: els.smsRemindersEnabled.checked,
-                      deadlineDay: (types_1.DAYS.includes(els.deadlineDay.value) ? els.deadlineDay.value : "Tuesday"),
-                      deadlineTime: els.deadlineTime.value || "23:59",
-                      firstReminderTime: els.firstReminderTime.value || "12:00",
-                      secondReminderTime: els.secondReminderTime.value || "20:00",
-                      firstReminderMessage: els.firstReminderMessage.value.trim(),
-                      secondReminderMessage: els.secondReminderMessage.value.trim()
-                  }
-              });
-              settings = await window.habanerosDesktop.saveSettings(settings);
-              await saveManagerCloudSnapshot().catch((error) => console.warn("Deadline settings were saved locally, but the cloud reminder snapshot was not updated.", error));
-              renderDeadlineSettings();
-              renderDashboard();
-              renderNeedsAttention();
+              if (!settings.availabilityDeadline.smsRemindersEnabled && els.smsRemindersEnabled.checked && !await requireAdminActionPassword("Enable SMS Reminders")) {
+                  els.smsRemindersEnabled.checked = false;
+                  updateDeadlinePreview();
+                  return;
+              }
+              await persistDeadlineSettingsFromInputs();
               await showDialogMessage("Availability deadline settings saved.");
           }
           catch (error) {
               showError("Availability deadline settings could not be saved.", error);
           }
+      }
+      async function handleSmsReminderToggle() {
+          if (els.smsRemindersEnabled.checked && !settings.availabilityDeadline.smsRemindersEnabled) {
+              if (!await requireAdminActionPassword("Enable SMS Reminders")) {
+                  els.smsRemindersEnabled.checked = false;
+                  updateDeadlinePreview();
+                  return;
+              }
+              await persistDeadlineSettingsFromInputs("SMS reminders enabled", "sms_reminders_enabled", "SMS reminders enabled.");
+              showToast("SMS reminders enabled.", "good", 7000);
+              return;
+          }
+          if (!els.smsRemindersEnabled.checked && settings.availabilityDeadline.smsRemindersEnabled) {
+              await persistDeadlineSettingsFromInputs("SMS reminders disabled", "sms_reminders_disabled", "SMS reminders disabled.");
+              showToast("SMS reminders disabled.", "warn", 7000);
+              return;
+          }
+          updateDeadlinePreview();
+      }
+      async function persistDeadlineSettingsFromInputs(activityMessage = "", actionType = "", logMessage = "") {
+          const wasEnabled = settings.availabilityDeadline.smsRemindersEnabled;
+          settings = (0, availabilityDeadline_1.normalizeSettings)({
+              ...settings,
+              availabilityDeadline: {
+                  smsRemindersEnabled: els.smsRemindersEnabled.checked,
+                  deadlineDay: (types_1.DAYS.includes(els.deadlineDay.value) ? els.deadlineDay.value : "Tuesday"),
+                  deadlineTime: els.deadlineTime.value || "23:59",
+                  firstReminderTime: els.firstReminderTime.value || "12:00",
+                  secondReminderTime: els.secondReminderTime.value || "20:00",
+                  firstReminderMessage: els.firstReminderMessage.value.trim(),
+                  secondReminderMessage: els.secondReminderMessage.value.trim(),
+                  schedulePostedMessage: els.schedulePostedMessage.value.trim(),
+                  employeeScheduleUrl: els.employeeScheduleUrl.value.trim()
+              }
+          });
+          settings = await window.habanerosDesktop.saveSettings(settings);
+          await saveManagerCloudSnapshot().catch((error) => console.warn("Deadline settings were saved locally, but the cloud reminder snapshot was not updated.", error));
+          renderDeadlineSettings();
+          renderDashboard();
+          renderNeedsAttention();
+          if (actionType)
+              addActivityLog({ category: "settings", actionType, message: logMessage || activityMessage });
+          else if (!wasEnabled && settings.availabilityDeadline.smsRemindersEnabled)
+              addActivityLog({ category: "settings", actionType: "sms_reminders_enabled", message: "SMS reminders enabled." });
+          else if (wasEnabled && !settings.availabilityDeadline.smsRemindersEnabled)
+              addActivityLog({ category: "settings", actionType: "sms_reminders_disabled", message: "SMS reminders disabled." });
       }
       function updateDeadlinePreview() {
           const previewSettings = (0, availabilityDeadline_1.normalizeSettings)({
@@ -1895,18 +2092,22 @@
                   firstReminderTime: els.firstReminderTime.value || "12:00",
                   secondReminderTime: els.secondReminderTime.value || "20:00",
                   firstReminderMessage: els.firstReminderMessage.value,
-                  secondReminderMessage: els.secondReminderMessage.value
+                  secondReminderMessage: els.secondReminderMessage.value,
+                  schedulePostedMessage: els.schedulePostedMessage.value,
+                  employeeScheduleUrl: els.employeeScheduleUrl.value
               }
           });
           const status = (0, availabilityDeadline_1.calculateAvailabilityStatus)(state.workers, submissions, previewSettings, state.rules.weekStart);
           const deadlineDate = status.deadlineAt ? status.deadlineAt.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.deadlineTime) : (0, availabilityDeadline_1.formatDeadlineSummary)(previewSettings);
           els.sendTestSmsBtn.disabled = !previewSettings.availabilityDeadline.smsRemindersEnabled;
-          els.deadlinePreview.innerHTML = '<strong>SMS reminders:</strong> ' + (previewSettings.availabilityDeadline.smsRemindersEnabled ? 'Enabled' : 'Disabled') + '<br><strong>Deadline:</strong> ' + (0, dom_1.escapeHtml)(deadlineDate) + '<br><strong>Reminder #1:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.firstReminderTime)) + '<br><strong>Reminder #2:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.secondReminderTime)) + '<br><strong>Status:</strong> Submitted: ' + status.submitted + ' | Waiting: ' + status.waiting + ' | Missing: ' + status.missing + '<br><strong>Reminder #1 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.firstReminderMessage, previewSettings)) + '<br><strong>Reminder #2 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.secondReminderMessage, previewSettings));
+          els.deadlinePreview.innerHTML = '<strong>SMS reminders:</strong> ' + (previewSettings.availabilityDeadline.smsRemindersEnabled ? 'Enabled' : 'Disabled') + '<br><strong>Deadline:</strong> ' + (0, dom_1.escapeHtml)(deadlineDate) + '<br><strong>Reminder #1:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.firstReminderTime)) + '<br><strong>Reminder #2:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.deadlineDay + " at " + (0, time_1.formatTime)(previewSettings.availabilityDeadline.secondReminderTime)) + '<br><strong>Status:</strong> Submitted: ' + status.submitted + ' | Waiting: ' + status.waiting + ' | Missing: ' + status.missing + '<br><strong>Reminder #1 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.firstReminderMessage, previewSettings)) + '<br><strong>Reminder #2 Text:</strong> ' + (0, dom_1.escapeHtml)((0, availabilityDeadline_1.buildReminderMessage)(previewSettings.availabilityDeadline.secondReminderMessage, previewSettings)) + '<br><strong>Schedule Posted Text:</strong> ' + (0, dom_1.escapeHtml)(previewSettings.availabilityDeadline.schedulePostedMessage);
       }
       async function checkReminderStatus() {
           await invokeReminderFunction("dryRun");
       }
       async function sendTestSms() {
+          if (!await requireAdminActionPassword("Send Test SMS", "test_sms_password_failed"))
+              return;
           if (!settings.availabilityDeadline.smsRemindersEnabled) {
               await showDialogMessage("SMS reminders are disabled. Turn on Enable SMS reminders before sending a test SMS.");
               return;
@@ -1917,30 +2118,38 @@
           }
           if (!await confirmDialog("Send one test SMS to " + els.testSmsPhone.value.trim() + "? This will not text employees."))
               return;
-          await invokeReminderFunction("test", els.testSmsPhone.value.trim());
+          try {
+              await invokeReminderFunction("test", els.testSmsPhone.value.trim());
+              addActivityLog({ category: "text", actionType: "test_sms_sent", message: "Test SMS sent.", metadata: { phone: els.testSmsPhone.value.trim() } });
+          }
+          catch (error) {
+              addActivityLog({ category: "text", actionType: "test_sms_failed", message: "Test SMS failed.", metadata: { phone: els.testSmsPhone.value.trim(), error: error instanceof Error ? error.message : String(error) } });
+          }
       }
-      async function invokeReminderFunction(mode, testPhoneNumber = "") {
+      async function invokeReminderFunction(mode, testPhoneNumber = "", extraBody = {}) {
           try {
               const config = readCloudConfigForm();
               if (!config.supabaseUrl || !config.anonKey) {
                   await showDialogMessage("Save Supabase settings before checking SMS reminders.");
-                  return;
+                  throw new Error("Supabase settings are required.");
               }
-              els.reminderStatus.textContent = mode === "test" ? "Sending test SMS..." : "Checking reminder status...";
+              els.reminderStatus.textContent = mode === "test" ? "Sending test SMS..." : mode === "schedulePosted" ? "Sending schedule posted text..." : "Checking reminder status...";
               const response = await fetch(config.supabaseUrl + "/functions/v1/send-availability-reminders", {
                   method: "POST",
                   headers: { apikey: config.anonKey, Authorization: "Bearer " + config.anonKey, "Content-Type": "application/json" },
-                  body: JSON.stringify({ mode, testPhoneNumber })
+                  body: JSON.stringify({ mode, testPhoneNumber, ...extraBody })
               });
               const result = await response.json().catch(() => ({}));
               if (!response.ok)
                   throw new Error(result.error || result.message || "Reminder function failed.");
               renderReminderFunctionResult(result);
+              return result;
           }
           catch (error) {
               const message = error instanceof Error ? error.message : "Please try again.";
               els.reminderStatus.textContent = "Reminder check failed: " + message;
               showError("SMS reminder check failed.", error);
+              throw error;
           }
       }
       async function saveManagerCloudSnapshot() {
@@ -2852,6 +3061,8 @@
           deadline.secondReminderTime = normalizeTime(deadline.secondReminderTime, defaults.availabilityDeadline.secondReminderTime);
           deadline.firstReminderMessage = normalizeMessage(deadline.firstReminderMessage, defaults.availabilityDeadline.firstReminderMessage);
           deadline.secondReminderMessage = normalizeMessage(deadline.secondReminderMessage, defaults.availabilityDeadline.secondReminderMessage);
+          deadline.schedulePostedMessage = normalizeMessage(deadline.schedulePostedMessage, defaults.availabilityDeadline.schedulePostedMessage);
+          deadline.employeeScheduleUrl = String(deadline.employeeScheduleUrl || defaults.availabilityDeadline.employeeScheduleUrl).trim();
           return { ...defaults, ...(settings || {}), availabilityDeadline: deadline, preferredSettings: (0, defaults_1.normalizePreferredSettings)(settings?.preferredSettings) };
       }
       function getAvailabilityWeekStart(scheduleWeekStart) {
@@ -2940,13 +3151,15 @@
                   firstReminderTime: "12:00",
                   secondReminderTime: "20:00",
                   firstReminderMessage: "Habaneros Reminder: Please submit your availability for next week's schedule before tonight's deadline.",
-                  secondReminderMessage: "Habaneros Final Reminder: We have not received your availability. Please submit it before tonight's deadline."
+                  secondReminderMessage: "Habaneros Final Reminder: We have not received your availability. Please submit it before tonight's deadline.",
+                  schedulePostedMessage: "Habaneros Schedule Posted: Next week's schedule is now available. Please view it here: [employee schedule link]",
+                  employeeScheduleUrl: "https://ibahri1.github.io/Habaneros-scheduler-2.0/employee-availability/"
               },
               preferredSettings: defaultPreferredSettings()
           };
       }
       function defaultAppState() {
-          return { workers: [], rules: defaultRules(), schedule: null, scheduleHistory: [] };
+          return { workers: [], rules: defaultRules(), schedule: null, scheduleHistory: [], activityLog: [] };
       }
       function defaultPreferredSettings() {
           const rules = defaultRules();
@@ -2972,7 +3185,9 @@
                   firstReminderTime: "20:00",
                   secondReminderTime: "19:00",
                   firstReminderMessage: "Habaneros Reminder: Please submit your availability for next week's schedule before tonight's deadline. Deadline is tonight at 11:59PM",
-                  secondReminderMessage: "Habaneros Final Reminder: We have not received your availability. Please submit it before tonight's deadline, TONIGHT AT 11:59PM"
+                  secondReminderMessage: "Habaneros Final Reminder: We have not received your availability. Please submit it before tonight's deadline, TONIGHT AT 11:59PM",
+                  schedulePostedMessage: "Habaneros Schedule Posted: Next week's schedule is now available. Please view it here: [employee schedule link]",
+                  employeeScheduleUrl: "https://ibahri1.github.io/Habaneros-scheduler-2.0/employee-availability/"
               },
               cloudConfig: {
                   supabaseUrl: "https://zwrgrgzixfrlipvdydtq.supabase.co",
@@ -3010,7 +3225,9 @@
                   firstReminderTime: timeValue(input?.availabilityDeadline?.firstReminderTime, defaults.availabilityDeadline.firstReminderTime),
                   secondReminderTime: timeValue(input?.availabilityDeadline?.secondReminderTime, defaults.availabilityDeadline.secondReminderTime),
                   firstReminderMessage: messageValue(input?.availabilityDeadline?.firstReminderMessage, defaults.availabilityDeadline.firstReminderMessage),
-                  secondReminderMessage: messageValue(input?.availabilityDeadline?.secondReminderMessage, defaults.availabilityDeadline.secondReminderMessage)
+                  secondReminderMessage: messageValue(input?.availabilityDeadline?.secondReminderMessage, defaults.availabilityDeadline.secondReminderMessage),
+                  schedulePostedMessage: messageValue(input?.availabilityDeadline?.schedulePostedMessage, defaults.availabilityDeadline.schedulePostedMessage),
+                  employeeScheduleUrl: String(input?.availabilityDeadline?.employeeScheduleUrl || defaults.availabilityDeadline.employeeScheduleUrl).trim()
               },
               cloudConfig: {
                   supabaseUrl: String(input?.cloudConfig?.supabaseUrl || defaults.cloudConfig.supabaseUrl).trim().replace(/\/$/, ""),
